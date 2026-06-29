@@ -1,0 +1,1893 @@
+rm(list=ls())
+if (file.exists(file.path(dirname(getwd()), "00_config.R"))) { source(file.path(dirname(getwd()), "00_config.R")) } else if (file.exists("00_config.R")) { source("00_config.R") }
+if (!exists("OUT_DIR")) OUT_DIR <- "E:/Briefcase/OneCare/HSG_manuscript/public_repro_outputs"
+PUBLIC_MODEL_ROOT <- file.path(dirname(OUT_DIR), "public_repro_model_outputs")
+dir.create(PUBLIC_MODEL_ROOT,recursive=TRUE,showWarnings=FALSE)
+options(stringsAsFactors=FALSE)
+options(scipen=999)
+options(tibble.print_max=Inf)
+options(tibble.print_min=Inf)
+options(tibble.width=Inf)
+DATA_PATH <- get("DATA_PATH", envir = .GlobalEnv)
+FIGURE_4_DIR <- file.path(PUBLIC_MODEL_ROOT, "Figure_4_IPTW_IRD_forest")
+OUT_DIR <- file.path(PUBLIC_MODEL_ROOT, "Figure_5_longitudinal_markers_IPTW_no_baseline_marker_adjustment")
+dir.create(OUT_DIR,recursive=TRUE,showWarnings=FALSE)
+MAIN_JPEG_DIR <- file.path(OUT_DIR, "jpeg_trajectory_spider_plots")
+DIFFERENCE_JPEG_DIR <- file.path(OUT_DIR, "jpeg_difference_trajectory_plots")
+TABLE_DIR <- file.path(OUT_DIR, "tables")
+MODEL_DIR <- file.path(OUT_DIR, "models")
+dir.create(MAIN_JPEG_DIR,recursive=TRUE,showWarnings=FALSE)
+dir.create(DIFFERENCE_JPEG_DIR,recursive=TRUE,showWarnings=FALSE)
+dir.create(TABLE_DIR,recursive=TRUE,showWarnings=FALSE)
+dir.create(MODEL_DIR,recursive=TRUE,showWarnings=FALSE)
+DELETE_OLD_OUTPUT_FILES<-TRUE
+if (isTRUE(DELETE_OLD_OUTPUT_FILES)) {
+unlink(list.files(MAIN_JPEG_DIR, pattern = "\\.jpeg$", full.names = TRUE), force = TRUE)
+unlink(list.files(DIFFERENCE_JPEG_DIR, pattern = "\\.jpeg$", full.names = TRUE), force = TRUE)
+unlink(list.files(TABLE_DIR, pattern = "\\.csv$", full.names = TRUE), force = TRUE)
+unlink(list.files(MODEL_DIR, pattern = "\\.rds$", full.names = TRUE), force = TRUE)
+}
+FIGURE_4_PATIENT_LEVEL_IPTW_PATH<-file.path(FIGURE_4_DIR,"diagnostics","Figure_4_patient_level_with_propensity_scores_and_IPTW.csv")
+FIGURE_4_PATIENT_LEVEL_FALLBACK_PATH<-file.path(FIGURE_4_DIR,"tables","Figure_4_patient_level_with_endpoint_counts.csv")
+HSG_START_DATE <- as.Date("2023-07-01")
+STUDY_END_DATE <- as.Date("2025-12-31")
+PRINT_PER_MARKER_CONSOLE_TABLES<-TRUE
+PRINT_FINAL_COMBINED_CONSOLE_TABLES<-TRUE
+HBA1C_PERCENT_MIN<-3.0
+HBA1C_PERCENT_MAX<-20.0
+AUTO_CONVERT_HBA1C_MMOL_MOL_TO_PERCENT<-TRUE
+HBA1C_MMOL_MOL_MIN<-20
+HBA1C_MMOL_MOL_MAX<-200
+convert_ifcc_to_ngsp_percent<-function(x_mmol_mol) {
+(x_mmol_mol + 2.15) / 10.929
+}
+MIN_MEASUREMENTS_PER_PATIENT<-2
+MIN_FOLLOWUP_DAYS_AFTER_BASELINE<-1
+MIN_PATIENTS_PER_GROUP_FOR_MODEL<-10
+MIN_TOTAL_PATIENTS_FOR_MODEL<-20
+MIN_TOTAL_MEASUREMENTS_FOR_MODEL<-40
+INCLUDE_BASELINE_ROW_IN_CHANGE_MODEL<-TRUE
+SHOW_BASELINE_POINTS<-TRUE
+APPLY_CHANGE_OUTLIER_EXCLUSION<-TRUE
+OUTLIER_LOWER_QUANTILE<-0.01
+OUTLIER_UPPER_QUANTILE<-0.99
+OUTLIER_IQR_MULTIPLIER<-3.0
+OUTLIER_MIN_NONMISSING_VALUES<-50
+USE_NATURAL_SPLINE_TIME<-TRUE
+TIME_SPLINE_DF<-3
+GEE_CORRELATION_STRUCTURE <- "exchangeable"
+RENORMALIZE_WEIGHTS_WITHIN_MARKER_COHORT<-TRUE
+ADJUST_FOR_BASELINE_MARKER_VALUE<-FALSE
+ADJUST_FOR_BASELINE_CALENDAR_TIME<-TRUE
+LANDMARK_MONTHS<-c(3,6,9,12,15,18,21,24,27,30)
+LANDMARK_SUPPORT_WINDOW_MONTHS<-2
+MIN_PATIENTS_PER_GROUP_FOR_LANDMARK_SUPPORT<-8
+LANDMARK_DODGE_MONTHS<-0.28
+SHOW_LANDMARK_DUMBBELL_CONNECTOR<-TRUE
+COMPUTE_UNIFORM_TIME_AVERAGED_EFFECTS<-TRUE
+COMPUTE_POSTBASELINE_TIME_AVERAGED_EFFECTS<-TRUE
+COMPUTE_AUC_DIFFERENCE_EFFECTS<-TRUE
+COMPUTE_OBSERVED_TIME_AVERAGED_EFFECTS<-TRUE
+COMPUTE_CONSTANT_EFFECT_SENSITIVITY_MODEL<-TRUE
+COMPUTE_GLOBAL_WALD_TESTS<-TRUE
+SUMMARY_EFFECT_HORIZONS_MONTHS<-c(6,12,18,24,30)
+SUMMARY_EFFECT_GRID_INTERVAL_MONTHS<-0.25
+SUMMARY_EFFECT_POSTBASELINE_START_MONTH<-3
+MIN_OBSERVED_AVERAGE_ROWS<-20
+MIN_OBSERVED_AVERAGE_PATIENTS<-10
+SIGNIFICANCE_ALPHA<-0.05
+SIGNIFICANCE_STAR_LABEL <- "*"
+SIGNIFICANCE_STAR_SIZE<-6.0
+SIGNIFICANCE_STAR_NUDGE_FRAC<-0.04
+PREDICTION_GRID_MONTH_INTERVAL<-0.25
+MAX_PLOT_FOLLOWUP_MONTHS<-30
+POINT_ALPHA_HSG<-0.32
+POINT_ALPHA_NONHSG<-1.00
+POINT_SIZE_HSG<-0.80
+POINT_SIZE_NONHSG<-POINT_SIZE_HSG * 2.0
+POINT_SHAPE_HSG<-16
+POINT_SHAPE_NONHSG<-15
+POINT_STROKE<-0
+POINT_JITTER_WIDTH_MONTHS<-0.08
+POINT_JITTER_HEIGHT<-0
+MAX_POINTS_PER_GROUP<-Inf
+SHOW_SPIDER_LINES<-TRUE
+MAX_SPIDER_PATIENTS_PER_GROUP<-Inf
+SPIDER_LINE_ALPHA<-0.18
+SPIDER_LINE_WIDTH<-0.18
+SHOW_RISK_SET_TABLE<-TRUE
+ALIGN_DIFFERENCE_PLOTS_TO_TRAJECTORY_LAYOUT<-TRUE
+RISK_TABLE_TITLE_X_FRACTION<--0.34
+RISK_TABLE_GROUP_LABEL_X_FRACTION<--0.060
+RISK_TABLE_LEFT_MARGIN_POINTS<-125
+RISK_TABLE_DISPLAY_MODE <- "at_or_after"
+RISK_TABLE_BREAKS_BY_MONTHS<-6
+RISK_TABLE_MEASUREMENT_WINDOW_MONTHS<-2
+LANDMARK_POINT_SIZE<-3.0
+LANDMARK_INTERVAL_LINEWIDTH<-0.75
+LANDMARK_INTERVAL_CAP_WIDTH_MONTHS<-0.18
+LANDMARK_CONNECTOR_LINEWIDTH<-0.65
+LANDMARK_CONNECTOR_ALPHA<-0.55
+LANDMARK_POINT_SHAPE_HSG<-16
+LANDMARK_POINT_SHAPE_NONHSG<-15
+FIG5_PANEL_WIDTH<-10.5
+FIG5_PANEL_HEIGHT<-7.5
+FIGURE_WIDTH<-FIG5_PANEL_WIDTH
+FIGURE_HEIGHT<-FIG5_PANEL_HEIGHT
+DIFFERENCE_FIGURE_WIDTH<-FIG5_PANEL_WIDTH
+DIFFERENCE_FIGURE_HEIGHT<-FIG5_PANEL_HEIGHT
+FIGURE_DPI<-400
+SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS<-TRUE
+BASE_FONT_SIZE<-30
+AXIS_TITLE_SIZE<-BASE_FONT_SIZE
+AXIS_TEXT_SIZE<-BASE_FONT_SIZE
+PLOT_TITLE_SIZE<-BASE_FONT_SIZE
+RISK_TABLE_FONT_SIZE_POINTS<-BASE_FONT_SIZE
+RISK_TABLE_TITLE_SIZE_POINTS<-BASE_FONT_SIZE
+RISK_TABLE_RELATIVE_HEIGHT<-0.28
+RISK_TABLE_EXTRA_HEIGHT_INCHES<-0.00
+COLOUR_HSG<-rgb(0,84,157,maxColorValue=255)
+COLOUR_NONHSG<-rgb(171,149,214,maxColorValue=255)
+RIBBON_ALPHA<-0.16
+DIFFERENCE_RIBBON_ALPHA<-0.20
+LINE_WIDTH_CURVE<-1.30
+LINE_WIDTH_DIFFERENCE<-1.30
+FIG5_AXIS_LINEWIDTH<-0.75
+FIG5_AXIS_TICK_LINEWIDTH<-0.75
+FIG5_ZERO_LINE_WIDTH<-0.75
+COLOUR_ZERO_LINE <- "#777777"
+COLOUR_GRID <- "#E6E6E6"
+COLOUR_TEXT <- "#111111"
+COLOUR_CONNECTOR <- "#606060"
+COLOUR_DIFFERENCE <- "#111111"
+COLOUR_DIFFERENCE_RIBBON <- "#999999"
+set.seed(20260506)
+required_packages<-c("readr","dplyr","tidyr","stringr","lubridate","janitor","ggplot2","scales","purrr","splines","geepack","broom","patchwork","cowplot","grid")
+optional_packages <- c("ragg")
+for (pkg in required_packages) {
+if (!requireNamespace(pkg,quietly=TRUE)) {
+  install.packages(pkg,dependencies=TRUE)
+}
+}
+for (pkg in optional_packages) {
+if (!requireNamespace(pkg,quietly=TRUE)) {
+  try(install.packages(pkg,dependencies=TRUE),silent=TRUE)
+}
+}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(janitor)
+library(ggplot2)
+library(scales)
+library(purrr)
+library(splines)
+library(geepack)
+library(broom)
+library(patchwork)
+library(cowplot)
+library(grid)
+library(grid)
+has_ragg <- requireNamespace("ragg", quietly = TRUE)
+RISK_TABLE_FONT_SIZE<-RISK_TABLE_FONT_SIZE_POINTS / ggplot2::.pt
+RISK_TABLE_TITLE_SIZE<-RISK_TABLE_TITLE_SIZE_POINTS / ggplot2::.pt
+parse_mixed_date<-function(x) {
+if (inherits(x, "Date")) {
+  return(x)
+}
+if (inherits(x, "POSIXct") || inherits(x, "POSIXlt")) {
+  return(as.Date(x))
+}
+if (is.numeric(x)) {
+  out<-rep(as.Date(NA),length(x))
+  valid_excel<-!is.na(x) & x > 20000 & x < 70000
+  out[valid_excel] <- as.Date(x[valid_excel], origin = "1899-12-30")
+  return(out)
+}
+x_chr<-as.character(x)
+x_chr<-stringr::str_squish(x_chr)
+x_chr[
+  is.na(x_chr) |
+  x_chr == "" |
+stringr::str_to_upper(x_chr)%in% c("NA","N/A","NULL","NONE","NIL","NAN","UNKNOWN","MISSING","NOT AVAILABLE","NOT APPLICABLE")
+]<-NA_character_
+parsed<-suppressWarnings(
+  lubridate::parse_date_time(
+  x_chr,
+orders=c("ymd HMS","ymd HM","ymd","dmy HMS","dmy HM","dmy","mdy HMS","mdy HM","mdy","d b Y","d B Y","d b y","d B y","d-b-Y","d-B-Y","d-b-y","d-B-y","b d Y","B d Y","b d y","B d y","m/d/Y","m/d/y","d/m/Y","d/m/y","Y/m/d","Y-m-d"),
+  tz = "UTC",
+  quiet=TRUE
+  )
+)
+out<-as.Date(parsed)
+numeric_x<-suppressWarnings(as.numeric(x_chr))
+excel_idx<-is.na(out) & !is.na(numeric_x) & numeric_x > 20000 & numeric_x < 70000
+if (any(excel_idx,na.rm=TRUE)) {
+  out[excel_idx] <- as.Date(numeric_x[excel_idx], origin = "1899-12-30")
+}
+out
+}
+is_present<-function(x) {
+if (inherits(x, "Date")) {
+  return(!is.na(x))
+}
+if (inherits(x, "POSIXct") || inherits(x, "POSIXlt")) {
+  return(!is.na(x))
+}
+x_chr<-as.character(x)
+x_chr<-stringr::str_squish(x_chr)
+x_upper<-stringr::str_to_upper(x_chr)
+!is.na(x_chr) &
+  x_chr != "" &
+!(x_upper %in% c("NA","N/A","NULL","NONE","NIL","NAN","UNKNOWN","MISSING","NOT AVAILABLE","NOT APPLICABLE"))
+}
+to_numeric_clean<-function(x) {
+if (is.numeric(x)) {
+  return(x)
+}
+suppressWarnings(readr::parse_number(as.character(x)))
+}
+to_bool_from_csv<-function(x) {
+if (is.logical(x)) {
+  return(!is.na(x) & x)
+}
+if (is.numeric(x)) {
+  return(!is.na(x) & x != 0)
+}
+x_chr<-stringr::str_to_lower(stringr::str_squish(as.character(x)))
+x_chr[is.na(x_chr)] <- ""
+positive<-x_chr %in% c("true","t","yes","y","1","present","recorded","done","completed")
+negative<-x_chr %in% c("","false","f","no","n","0","absent","missing","na","n/a","null")
+positive & !negative
+}
+fmt_n<-function(x) {
+x_num<-suppressWarnings(as.numeric(x))
+out <- rep("NA", length(x_num))
+keep<-!is.na(x_num) & is.finite(x_num)
+out[keep]<-scales::comma(x_num[keep],accuracy=1)
+out
+}
+fmt_num<-function(x,digits=2) {
+x_num<-suppressWarnings(as.numeric(x))
+out <- rep("NA", length(x_num))
+keep<-!is.na(x_num) & is.finite(x_num)
+out[keep]<-formatC(
+  x_num[keep],
+  format = "f",
+  digits=digits
+)
+out
+}
+fmt_p<-function(x,digits=3) {
+x_num<-suppressWarnings(as.numeric(x))
+out <- rep("NA", length(x_num))
+keep<-!is.na(x_num) & is.finite(x_num)
+very_small<-keep & x_num < 0.001
+ordinary<-keep & x_num >= 0.001
+out[very_small] <- "<0.001"
+out[ordinary]<-formatC(
+  x_num[ordinary],
+  format = "f",
+  digits=digits
+)
+out
+}
+fmt_ci<-function(estimate,conf_low,conf_high,digits=2) {
+paste0(fmt_num(estimate,digits=digits)," (",fmt_num(conf_low,digits=digits)," to ",fmt_num(conf_high,digits=digits),")")
+}
+weighted_mean<-function(x,w) {
+x<-as.numeric(x)
+w<-as.numeric(w)
+keep<-!is.na(x) & !is.na(w) & is.finite(x) & is.finite(w) & w > 0
+if (!any(keep)) {
+  return(NA_real_)
+}
+sum(w[keep] * x[keep]) / sum(w[keep])
+}
+check_file_exists <- function(path, label = "file") {
+if (!file.exists(path)) {
+  stop(
+  "Required ",
+  label,
+  " not found:\n",
+  path
+  )
+}
+invisible(TRUE)
+}
+standardize_date_columns<-function(df) {
+date_cols<-intersect(
+  names(df),
+c("encounter_date","encounter_month","first_encounter_date","last_encounter_date","first_valid_enrolment_reference_date","first_deenrolment_event_date","observation_start_date","observation_end_date","baseline_date","measurement_date")
+)
+for (col in date_cols) {
+  df[[col]]<-parse_mixed_date(df[[col]])
+}
+df
+}
+make_slug<-function(x) {
+x<-stringr::str_to_lower(x)
+x <- stringr::str_replace_all(x, "[^a-z0-9]+", "_")
+x <- stringr::str_replace_all(x, "^_+|_+$", "")
+x
+}
+make_marker_month_breaks<-function(max_followup_for_plot) {
+max_month<-ceiling(max_followup_for_plot)
+seq(
+  from=0,
+  to=max_month,
+  by=1
+)
+}
+label_every_6_months_marker<-function(x) {
+out <- rep("", length(x))
+labelled<-!is.na(x) &
+  is.finite(x) &
+  abs(x %% 6) < 0.000001
+out[labelled]<-as.character(round(x[labelled]))
+out
+}
+theme_marker<-function(base_size=BASE_FONT_SIZE) {
+ggplot2::theme_minimal(base_size=base_size) + ggplot2::theme(
+  text=element_text(
+  family = "sans",
+  colour=COLOUR_TEXT,
+  size=base_size,
+  face = "plain"
+  ),
+  plot.title=element_text(
+  face = "plain",
+  size=base_size,
+  hjust=0.5,
+  colour=COLOUR_TEXT,
+  margin=margin(b=8)
+  ),
+  plot.subtitle=element_blank(),
+  plot.caption=element_blank(),
+  axis.title.x=element_text(
+  face = "plain",
+  size=base_size,
+  colour=COLOUR_TEXT,
+  margin=margin(t=10)
+  ),
+  axis.title.y=element_text(
+  face = "plain",
+  size=base_size,
+  colour=COLOUR_TEXT,
+  margin=margin(r=10)
+  ),
+  axis.text.x=element_text(
+  size=base_size,
+  face = "plain",
+  colour = "#222222",
+  margin=margin(t=8)
+  ),
+  axis.text.y=element_text(
+  size=base_size,
+  face = "plain",
+  colour = "#222222",
+  margin=margin(r=6)
+  ),
+  axis.line.x=element_line(
+  colour = "#333333",
+  linewidth=FIG5_AXIS_LINEWIDTH
+  ),
+  axis.line.y=element_line(
+  colour = "#333333",
+  linewidth=FIG5_AXIS_LINEWIDTH
+  ),
+  axis.ticks.x=element_line(
+  colour = "#333333",
+  linewidth=FIG5_AXIS_TICK_LINEWIDTH
+  ),
+  axis.ticks.y=element_line(
+  colour = "#333333",
+  linewidth=FIG5_AXIS_TICK_LINEWIDTH
+  ),
+  axis.ticks.length.x = grid::unit(7, "pt"),
+  axis.ticks.length.y = grid::unit(5.5, "pt"),
+  panel.grid.major.x=element_blank(),
+  panel.grid.major.y=element_blank(),
+  panel.grid.minor=element_blank(),
+  legend.position = "none",
+  plot.margin=margin(
+  t=18,
+  r=16,
+  b=12,
+  l=14
+  )
+  )
+}
+theme_difference<-function(base_size=BASE_FONT_SIZE) {
+theme_marker(base_size=base_size)
+}
+save_jpeg_plot<-function(plot_object,filename,width,height,dpi) {
+draw_plot_object<-function(x) {
+  if (inherits(x, c("gtable", "grob", "gTree"))) {
+  grid::grid.draw(x)
+  } else {
+  print(x)
+  }
+}
+if (has_ragg) {
+  ragg::agg_jpeg(
+  filename=filename,
+  width=width,
+  height=height,
+  units = "in",
+  res=dpi,
+  background = "white"
+  )
+  draw_plot_object(plot_object)
+  grDevices::dev.off()
+} else {
+  grDevices::jpeg(
+  filename=filename,
+  width=width,
+  height=height,
+  units = "in",
+  res=dpi,
+  bg = "white",
+  quality=100
+  )
+  draw_plot_object(plot_object)
+  grDevices::dev.off()
+}
+invisible(filename)
+}
+make_placeholder_plot<-function(title,message_text) {
+ggplot() + annotate("text",x=0,y=0,label=message_text,size=4.0,lineheight=0.95,colour="#111111")+ labs(title=title)+ coord_cartesian(xlim=c(-1,1),ylim=c(-1,1)) + theme_void(base_size=11) + theme(plot.title=element_text(face="bold",hjust=0,colour="#111111"),plot.margin=margin(12,12,12,12))
+}
+console_print_table<-function(x,title=NULL) {
+if (!is.null(title)) {
+}
+if (is.null(x) || nrow(x) == 0) {
+  return(invisible(NULL))
+}
+print(x,n=Inf,width=Inf)
+invisible(NULL)
+}
+clean_marker_values<-function(x,marker_id,valid_min,valid_max) {
+raw_num<-to_numeric_clean(x)
+value<-rep(NA_real_,length(raw_num))
+unit_inferred<-rep(NA_character_,length(raw_num))
+if (marker_id == "hba1c") {
+  percent_idx<-!is.na(raw_num) &
+  raw_num >= HBA1C_PERCENT_MIN &
+  raw_num <= HBA1C_PERCENT_MAX
+  value[percent_idx]<-raw_num[percent_idx]
+  unit_inferred[percent_idx] <- "NGSP_percent"
+  mmol_mol_idx<-!is.na(raw_num) &
+  raw_num > HBA1C_PERCENT_MAX &
+  raw_num >= HBA1C_MMOL_MOL_MIN &
+  raw_num <= HBA1C_MMOL_MOL_MAX
+  if (AUTO_CONVERT_HBA1C_MMOL_MOL_TO_PERCENT) {
+  value[mmol_mol_idx]<-convert_ifcc_to_ngsp_percent(raw_num[mmol_mol_idx])
+  unit_inferred[mmol_mol_idx] <- "IFCC_mmol_per_mol_converted_to_NGSP_percent"
+  }
+} else {
+  valid_idx<-!is.na(raw_num) &
+  raw_num >= valid_min &
+  raw_num <= valid_max
+  value[valid_idx]<-raw_num[valid_idx]
+  unit_inferred[valid_idx] <- "native_units"
+}
+final_valid<-!is.na(value) &
+  is.finite(value) &
+  value >= valid_min &
+  value <= valid_max
+value[!final_valid]<-NA_real_
+unit_inferred[!final_valid]<-NA_character_
+tibble::tibble(raw_numeric=raw_num,marker_value=value,unit_inferred=unit_inferred)
+}
+coalesce_bool_columns<-function(df,columns) {
+present_columns<-intersect(columns,names(df))
+if (length(present_columns) == 0) {
+  return(rep(FALSE,nrow(df)))
+}
+flag_matrix<-vapply(
+  present_columns,
+  function(column_name) {
+  to_bool_from_csv(df[[column_name]])
+  },
+  logical(nrow(df))
+)
+if (is.null(dim(flag_matrix))) {
+  flag_matrix<-matrix(flag_matrix,ncol=1)
+}
+rowSums(flag_matrix,na.rm=TRUE) > 0
+}
+compute_change_outlier_bounds<-function(x) {
+x<-as.numeric(x)
+x<-x[!is.na(x) & is.finite(x)]
+if (!APPLY_CHANGE_OUTLIER_EXCLUSION || length(x) < OUTLIER_MIN_NONMISSING_VALUES) {
+  return(
+tibble::tibble(lower_bound=-Inf,upper_bound=Inf,q_lower=NA_real_,q_upper=NA_real_,iqr_lower=NA_real_,iqr_upper=NA_real_,n_values_used=length(x),outlier_method="No exclusion: insufficient values or disabled")
+  )
+}
+q_lower<-as.numeric(
+stats::quantile(x,probs=OUTLIER_LOWER_QUANTILE,na.rm=TRUE,names=FALSE,type=8)
+)
+q_upper<-as.numeric(
+stats::quantile(x,probs=OUTLIER_UPPER_QUANTILE,na.rm=TRUE,names=FALSE,type=8)
+)
+q1<-as.numeric(
+stats::quantile(x,probs=0.25,na.rm=TRUE,names=FALSE,type=8)
+)
+q3<-as.numeric(
+stats::quantile(x,probs=0.75,na.rm=TRUE,names=FALSE,type=8)
+)
+iqr_value<-q3 - q1
+iqr_lower<-q1 - OUTLIER_IQR_MULTIPLIER * iqr_value
+iqr_upper<-q3 + OUTLIER_IQR_MULTIPLIER * iqr_value
+lower_bound<-max(q_lower,iqr_lower,na.rm=TRUE)
+upper_bound<-min(q_upper,iqr_upper,na.rm=TRUE)
+if (!is.finite(lower_bound) || !is.finite(upper_bound) || lower_bound >= upper_bound) {
+  lower_bound<-q_lower
+  upper_bound<-q_upper
+}
+if (!is.finite(lower_bound) || !is.finite(upper_bound) || lower_bound >= upper_bound) {
+  lower_bound<--Inf
+  upper_bound<-Inf
+}
+tibble::tibble(lower_bound=lower_bound,upper_bound=upper_bound,q_lower=q_lower,q_upper=q_upper,iqr_lower=iqr_lower,iqr_upper=iqr_upper,n_values_used=length(x),outlier_method=paste0("Combined quantile/IQR on follow-up change: lower=max(q",OUTLIER_LOWER_QUANTILE,", Q1-",OUTLIER_IQR_MULTIPLIER,"*IQR); upper=min(q",OUTLIER_UPPER_QUANTILE,", Q3+",OUTLIER_IQR_MULTIPLIER,"*IQR)"))
+}
+create_time_basis<-function(data,requested_df=3) {
+followup<-as.numeric(data$followup_months)
+followup<-followup[is.finite(followup)]
+if (length(unique(round(followup,6))) < 4) {
+  data$followup_months_linear<-data$followup_months
+  return(
+list(data=data,basis_columns="followup_months_linear",basis_attributes=list(model_type="linear_time",knots=numeric(0),boundary_knots=range(followup,na.rm=TRUE),df=NA_integer_),use_spline=FALSE)
+  )
+}
+nonzero_followup<-followup[followup > 0]
+if (length(unique(round(nonzero_followup,6))) < 3) {
+  data$followup_months_linear<-data$followup_months
+  return(
+list(data=data,basis_columns="followup_months_linear",basis_attributes=list(model_type="linear_time",knots=numeric(0),boundary_knots=range(followup,na.rm=TRUE),df=NA_integer_),use_spline=FALSE)
+  )
+}
+boundary_knots<-c(0,max(followup,na.rm=TRUE))
+n_internal_knots<-max(requested_df - 1,1)
+probs<-seq(from=0,to=1,length.out=n_internal_knots + 2)
+probs<-probs[-c(1,length(probs))]
+internal_knots<-as.numeric(
+stats::quantile(nonzero_followup,probs=probs,na.rm=TRUE,names=FALSE,type=8)
+)
+internal_knots<-unique(internal_knots)
+internal_knots<-internal_knots[
+  internal_knots > boundary_knots[1] &
+  internal_knots < boundary_knots[2]
+]
+if (length(internal_knots) < 1) {
+  data$followup_months_linear<-data$followup_months
+  return(
+list(data=data,basis_columns="followup_months_linear",basis_attributes=list(model_type="linear_time",knots=numeric(0),boundary_knots=boundary_knots,df=NA_integer_),use_spline=FALSE)
+  )
+}
+basis<-splines::ns(data$followup_months,knots=internal_knots,Boundary.knots=boundary_knots,intercept=FALSE)
+basis_columns <- paste0("time_ns_", seq_len(ncol(basis)))
+basis_df<-as.data.frame(basis)
+names(basis_df)<-basis_columns
+data<-bind_cols(data,basis_df)
+list(data=data,basis_columns=basis_columns,basis_attributes=list(model_type="natural_spline",knots=internal_knots,boundary_knots=boundary_knots,df=length(basis_columns)),use_spline=TRUE)
+}
+add_time_basis_to_newdata<-function(newdata,time_basis_info) {
+if (isTRUE(time_basis_info$use_spline)) {
+basis<-splines::ns(newdata$followup_months,knots=time_basis_info$basis_attributes$knots,Boundary.knots=time_basis_info$basis_attributes$boundary_knots,intercept=FALSE)
+  basis_df<-as.data.frame(basis)
+  names(basis_df)<-time_basis_info$basis_columns
+  bind_cols(newdata,basis_df)
+} else {
+  newdata %>% mutate(followup_months_linear=followup_months)
+}
+}
+get_model_vcov<-function(fit) {
+vc<-tryCatch(
+  {
+  stats::vcov(fit)
+  },
+  error=function(e) {
+  NULL
+  }
+)
+beta<-stats::coef(fit)
+beta_names<-names(beta)
+if (is.null(vc)) {
+  vc<-fit$geese$vbeta
+}
+if (is.null(dim(vc))) {
+  stop("Could not extract a valid variance-covariance matrix from the GEE model.")
+}
+if (is.null(colnames(vc)) || is.null(rownames(vc))) {
+  rownames(vc)<-beta_names
+  colnames(vc)<-beta_names
+}
+vc[beta_names,beta_names,drop=FALSE]
+}
+make_model_matrix_for_fit<-function(fit,newdata) {
+terms_obj<-stats::delete.response(stats::terms(fit))
+X<-stats::model.matrix(terms_obj,data=newdata)
+beta_names<-names(stats::coef(fit))
+missing_cols<-setdiff(beta_names,colnames(X))
+if (length(missing_cols) > 0) {
+  missing_matrix<-matrix(
+  0,
+  nrow=nrow(X),
+  ncol=length(missing_cols)
+  )
+  colnames(missing_matrix)<-missing_cols
+  X<-cbind(X,missing_matrix)
+}
+X[,beta_names,drop=FALSE]
+}
+predict_gee_identity<-function(fit,newdata) {
+beta<-stats::coef(fit)
+beta<-beta[!is.na(beta)]
+vc<-get_model_vcov(fit)
+vc<-vc[names(beta),names(beta),drop=FALSE]
+X<-make_model_matrix_for_fit(fit,newdata)
+X<-X[,names(beta),drop=FALSE]
+fit_value<-as.numeric(X %*% beta)
+pred_var<-rowSums((X %*% vc) * X)
+pred_se<-sqrt(pmax(pred_var,0))
+newdata %>% mutate(estimate=fit_value,std_error=pred_se,conf_low=estimate - stats::qnorm(0.975)* std_error,conf_high=estimate + stats::qnorm(0.975)* std_error)
+}
+contrast_gee_identity<-function(fit,newdata_a,newdata_b,contrast_label) {
+beta<-stats::coef(fit)
+beta<-beta[!is.na(beta)]
+vc<-get_model_vcov(fit)
+vc<-vc[names(beta),names(beta),drop=FALSE]
+X_a<-make_model_matrix_for_fit(fit,newdata_a)
+X_b<-make_model_matrix_for_fit(fit,newdata_b)
+X_a<-X_a[,names(beta),drop=FALSE]
+X_b<-X_b[,names(beta),drop=FALSE]
+L<-X_a - X_b
+estimate<-as.numeric(L %*% beta)
+variance<-rowSums((L %*% vc) * L)
+std_error<-sqrt(pmax(variance,0))
+tibble::tibble(contrast=contrast_label,estimate=estimate,std_error=std_error,conf_low=estimate - stats::qnorm(0.975)* std_error,conf_high=estimate + stats::qnorm(0.975)* std_error,p_value=ifelse(std_error > 0 & is.finite(std_error),2 * stats::pnorm(abs(estimate / std_error),lower.tail=FALSE),NA_real_))
+}
+contrast_gee_average_identity<-function(
+  fit,
+  newdata_a,
+  newdata_b,
+  averaging_weights=NULL,
+  contrast_label,
+  estimand_type,
+  averaging_method,
+  horizon_start_month,
+  horizon_end_month,
+  unit_label,
+  lower_is_better,
+  n_support_patients_hsg=NA_real_,
+  n_support_patients_nonhsg=NA_real_,
+  n_support_rows=NA_real_
+) {
+beta<-stats::coef(fit)
+beta<-beta[!is.na(beta)]
+vc<-get_model_vcov(fit)
+vc<-vc[names(beta),names(beta),drop=FALSE]
+X_a<-make_model_matrix_for_fit(fit,newdata_a)
+X_b<-make_model_matrix_for_fit(fit,newdata_b)
+X_a<-X_a[,names(beta),drop=FALSE]
+X_b<-X_b[,names(beta),drop=FALSE]
+L<-X_a - X_b
+if (nrow(L) == 0) {
+  return(
+tibble::tibble(contrast=contrast_label,estimand_type=estimand_type,averaging_method=averaging_method,horizon_start_month=horizon_start_month,horizon_end_month=horizon_end_month,horizon_duration_months=horizon_end_month - horizon_start_month,estimate=NA_real_,std_error=NA_real_,conf_low=NA_real_,conf_high=NA_real_,p_value=NA_real_,unit=unit_label,estimate_print="NA",p_print="NA",n_time_points=0L,n_averaging_rows=0L,n_support_patients_hsg=n_support_patients_hsg,n_support_patients_nonhsg=n_support_patients_nonhsg,n_support_rows=n_support_rows,interpretation="Not estimable")
+  )
+}
+if (is.null(averaging_weights)) {
+  averaging_weights<-rep(1,nrow(L))
+}
+averaging_weights<-as.numeric(averaging_weights)
+valid_weight<-!is.na(averaging_weights) &
+  is.finite(averaging_weights) &
+  averaging_weights > 0
+if (!any(valid_weight)) {
+  return(
+tibble::tibble(contrast=contrast_label,estimand_type=estimand_type,averaging_method=averaging_method,horizon_start_month=horizon_start_month,horizon_end_month=horizon_end_month,horizon_duration_months=horizon_end_month - horizon_start_month,estimate=NA_real_,std_error=NA_real_,conf_low=NA_real_,conf_high=NA_real_,p_value=NA_real_,unit=unit_label,estimate_print="NA",p_print="NA",n_time_points=nrow(L),n_averaging_rows=nrow(L),n_support_patients_hsg=n_support_patients_hsg,n_support_patients_nonhsg=n_support_patients_nonhsg,n_support_rows=n_support_rows,interpretation="Not estimable: no valid averaging weights")
+  )
+}
+L<-L[valid_weight,,drop=FALSE]
+averaging_weights<-averaging_weights[valid_weight]
+averaging_weights<-averaging_weights / sum(averaging_weights)
+L_bar<-colSums(L * averaging_weights)
+estimate<-as.numeric(sum(L_bar * beta))
+variance<-as.numeric(t(L_bar) %*% vc %*% L_bar)
+std_error<-sqrt(max(variance,0))
+conf_low<-estimate - stats::qnorm(0.975) * std_error
+conf_high<-estimate + stats::qnorm(0.975) * std_error
+p_value<-ifelse(std_error > 0 & is.finite(std_error),2 * stats::pnorm(abs(estimate / std_error),lower.tail=FALSE),NA_real_)
+tibble::tibble(contrast=contrast_label,estimand_type=estimand_type,averaging_method=averaging_method,horizon_start_month=horizon_start_month,horizon_end_month=horizon_end_month,horizon_duration_months=horizon_end_month - horizon_start_month,estimate=estimate,std_error=std_error,conf_low=conf_low,conf_high=conf_high,p_value=p_value,unit=unit_label,estimate_print=fmt_ci(estimate=estimate,conf_low=conf_low,conf_high=conf_high,digits=2),p_print=fmt_p(p_value,digits=3),n_time_points=nrow(newdata_a),n_averaging_rows=nrow(L),n_support_patients_hsg=n_support_patients_hsg,n_support_patients_nonhsg=n_support_patients_nonhsg,n_support_rows=n_support_rows,interpretation=classify_effect_direction(estimate=estimate,p_value=p_value,lower_is_better=lower_is_better))
+}
+convert_average_effect_to_auc<-function(
+  average_effect_row,
+  unit_label,
+  lower_is_better
+) {
+if (nrow(average_effect_row) == 0) {
+  return(average_effect_row)
+}
+duration<-average_effect_row$horizon_duration_months
+estimate<-average_effect_row$estimate * duration
+std_error<-average_effect_row$std_error * duration
+conf_low<-average_effect_row$conf_low * duration
+conf_high<-average_effect_row$conf_high * duration
+p_value<-average_effect_row$p_value
+average_effect_row %>% mutate(estimand_type="Area under HSG-minus-non-HSG difference curve",averaging_method=paste0("AUC derived from ",averaging_method),estimate=estimate,std_error=std_error,conf_low=conf_low,conf_high=conf_high,p_value=p_value,unit=paste0(unit_label," \u00d7 months"),estimate_print=fmt_ci(estimate=estimate,conf_low=conf_low,conf_high=conf_high,digits=2),p_print=fmt_p(p_value,digits=3),interpretation=classify_effect_direction(estimate=estimate,p_value=p_value,lower_is_better=lower_is_better))
+}
+wald_test_gee_terms<-function(
+  fit,
+  term_regex,
+  test_label,
+  marker_id,
+  marker_label
+) {
+beta<-stats::coef(fit)
+beta<-beta[!is.na(beta)]
+beta_names<-names(beta)
+terms_to_test<-beta_names[
+  stringr::str_detect(beta_names,term_regex)
+]
+if (length(terms_to_test) == 0) {
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,test_label=test_label,terms_tested=NA_character_,n_terms=0L,chisq=NA_real_,df=0L,p_value=NA_real_,p_print="NA",test_status="No matching model terms")
+  )
+}
+vc<-get_model_vcov(fit)
+vc<-vc[beta_names,beta_names,drop=FALSE]
+beta_sub<-beta[terms_to_test]
+vc_sub<-vc[terms_to_test,terms_to_test,drop=FALSE]
+chisq_value<-tryCatch(
+  {
+  as.numeric(t(beta_sub) %*% qr.solve(vc_sub,beta_sub))
+  },
+  error=function(e) {
+  NA_real_
+  }
+)
+df_value<-length(terms_to_test)
+p_value<-ifelse(!is.na(chisq_value)&& is.finite(chisq_value)&& df_value > 0,stats::pchisq(chisq_value,df=df_value,lower.tail=FALSE),NA_real_)
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,test_label=test_label,terms_tested=paste(terms_to_test,collapse="; "),n_terms=df_value,chisq=chisq_value,df=df_value,p_value=p_value,p_print=fmt_p(p_value,digits=3),test_status=ifelse(is.na(p_value),"Failed","OK"))
+}
+sample_points_within_group<-function(df,max_points_per_group) {
+if (is.infinite(max_points_per_group)) {
+  return(df)
+}
+n_take<-min(nrow(df),max_points_per_group)
+if (n_take <= 0) {
+  return(df[0,,drop=FALSE])
+}
+df %>% dplyr::slice_sample(n=n_take)
+}
+sample_patients_within_group<-function(df,max_patients_per_group) {
+if (is.infinite(max_patients_per_group)) {
+  return(df)
+}
+n_take<-min(nrow(df),max_patients_per_group)
+if (n_take <= 0) {
+  return(df[0,,drop=FALSE])
+}
+df %>% dplyr::slice_sample(n=n_take)
+}
+make_empty_landmark_predictions<-function(marker_id,marker_label) {
+tibble::tibble(followup_months=numeric(0),hsg_exposed=integer(0),baseline_value=numeric(0),baseline_value_centered=numeric(0),baseline_calendar_month=numeric(0),baseline_calendar_month_centered=numeric(0),comparison_group=factor(character(0),levels=c("HSG","Non-HSG")),estimate=numeric(0),std_error=numeric(0),conf_low=numeric(0),conf_high=numeric(0),marker_id=character(0),marker_label=character(0),landmark_month=numeric(0),x_plot=numeric(0))
+}
+make_empty_landmark_contrasts<-function(marker_id,marker_label) {
+tibble::tibble(contrast=character(0),estimate=numeric(0),std_error=numeric(0),conf_low=numeric(0),conf_high=numeric(0),p_value=numeric(0),landmark_month=numeric(0),support_patients_hsg=numeric(0),support_patients_nonhsg=numeric(0),support_measurements_hsg=numeric(0),support_measurements_nonhsg=numeric(0),marker_id=character(0),marker_label=character(0),estimate_print=character(0),p_print=character(0),interpretation=character(0))
+}
+make_risk_times<-function(max_followup_for_plot) {
+last_break<-floor(max_followup_for_plot / RISK_TABLE_BREAKS_BY_MONTHS) *
+  RISK_TABLE_BREAKS_BY_MONTHS
+risk_times<-seq(
+  from=0,
+  to=last_break,
+  by=RISK_TABLE_BREAKS_BY_MONTHS
+)
+risk_times<-unique(risk_times[risk_times <= max_followup_for_plot])
+if (length(risk_times) == 0) {
+  risk_times<-0
+}
+risk_times
+}
+make_number_at_risk_data<-function(model_data,risk_times,marker_id,marker_label) {
+patient_followup<-model_data %>% group_by(patient,comparison_group) %>% summarise(max_followup_months=max(followup_months,na.rm=TRUE),.groups="drop")
+group_template<-tidyr::crossing(
+  risk_month=risk_times,
+  comparison_group = factor(c("HSG", "Non-HSG"), levels = c("HSG", "Non-HSG"))
+)
+at_risk_counts<-purrr::map_dfr(
+  risk_times,
+  function(this_month) {
+  patient_followup %>% filter(max_followup_months >= this_month) %>% count(comparison_group, name = "n_at_risk_patients") %>% mutate(risk_month=this_month)
+  }
+) %>% right_join(group_template,by=c("risk_month","comparison_group"))%>% mutate(n_at_risk_patients=tidyr::replace_na(n_at_risk_patients,0L))
+measurement_window_counts<-purrr::map_dfr(
+  risk_times,
+  function(this_month) {
+  model_data %>% filter(abs(followup_months - this_month)<=RISK_TABLE_MEASUREMENT_WINDOW_MONTHS)%>% group_by(comparison_group) %>% summarise(n_measurement_window_patients=dplyr::n_distinct(patient),n_measurement_window_rows=n(),.groups="drop")%>% mutate(risk_month=this_month)
+  }
+) %>% right_join(group_template,by=c("risk_month","comparison_group"))%>% mutate(n_measurement_window_patients=tidyr::replace_na(n_measurement_window_patients,0L),n_measurement_window_rows=tidyr::replace_na(n_measurement_window_rows,0L))
+out<-at_risk_counts %>% left_join(measurement_window_counts,by=c("risk_month","comparison_group"))%>% mutate(marker_id=marker_id,marker_label=marker_label,n_display=dplyr::case_when(RISK_TABLE_DISPLAY_MODE=="at_or_after" ~ as.character(n_at_risk_patients),RISK_TABLE_DISPLAY_MODE=="measurement_window" ~ as.character(n_measurement_window_patients),RISK_TABLE_DISPLAY_MODE=="both" ~ paste0(n_at_risk_patients,"/",n_measurement_window_patients),TRUE ~ as.character(n_at_risk_patients)))%>% select(marker_id,marker_label,risk_month,comparison_group,n_at_risk_patients,n_measurement_window_patients,n_measurement_window_rows,n_display)%>% arrange(marker_label,risk_month,comparison_group)
+out
+}
+make_risk_set_plot<-function(
+  risk_table_data,
+  max_followup_for_plot,
+  draw_text=TRUE
+) {
+if (nrow(risk_table_data) == 0) {
+  return(ggplot() + theme_void())
+}
+text_alpha<-ifelse(isTRUE(draw_text),1,0)
+risk_title_x<-RISK_TABLE_TITLE_X_FRACTION * max_followup_for_plot
+risk_group_label_x<-RISK_TABLE_GROUP_LABEL_X_FRACTION * max_followup_for_plot
+risk_plot_data<-risk_table_data %>% mutate(comparison_group=factor(as.character(comparison_group),levels=c("HSG","Non-HSG")),y_position=dplyr::case_when(comparison_group=="HSG" ~ 2,comparison_group=="Non-HSG" ~ 1,TRUE ~ 1))
+row_label_hsg<-tibble::tibble(label="HSG",y_position=2)
+row_label_nonhsg<-tibble::tibble(label="Non-HSG",y_position=1)
+p<-ggplot() + annotate("text",x=risk_title_x,y=2.82,label="Number at risk",hjust=0,size=RISK_TABLE_TITLE_SIZE,fontface="plain",colour=grDevices::adjustcolor("#333333",alpha.f=text_alpha))+ geom_text(data=row_label_hsg,aes(x=risk_group_label_x,y=y_position,label=label),inherit.aes=FALSE,hjust=1,size=RISK_TABLE_FONT_SIZE,fontface="plain",colour=grDevices::adjustcolor(COLOUR_HSG,alpha.f=text_alpha))+ geom_text(data=row_label_nonhsg,aes(x=risk_group_label_x,y=y_position,label=label),inherit.aes=FALSE,hjust=1,size=RISK_TABLE_FONT_SIZE,fontface="plain",colour=grDevices::adjustcolor(COLOUR_NONHSG,alpha.f=text_alpha))+ geom_text(data=risk_plot_data %>% filter(comparison_group=="HSG"),aes(x=risk_month,y=y_position,label=n_display),inherit.aes=FALSE,hjust=0.5,size=RISK_TABLE_FONT_SIZE,fontface="plain",colour=grDevices::adjustcolor(COLOUR_HSG,alpha.f=text_alpha))+ geom_text(data=risk_plot_data %>% filter(comparison_group=="Non-HSG"),aes(x=risk_month,y=y_position,label=n_display),inherit.aes=FALSE,hjust=0.5,size=RISK_TABLE_FONT_SIZE,fontface="plain",colour=grDevices::adjustcolor(COLOUR_NONHSG,alpha.f=text_alpha))+ scale_x_continuous(breaks=unique(risk_plot_data$risk_month),expand=expansion(mult=c(0.01,0.03)))+ scale_y_continuous(limits=c(0.35,3.10),breaks=NULL,expand=expansion(mult=c(0,0)))+ coord_cartesian(xlim=c(0,max_followup_for_plot),clip="off")+ theme_void(base_size=BASE_FONT_SIZE) + theme(plot.margin=margin(t=4,r=12,b=6,l=RISK_TABLE_LEFT_MARGIN_POINTS))
+p
+}
+classify_effect_direction<-function(estimate,p_value,lower_is_better) {
+if (is.na(estimate) || !is.finite(estimate)) {
+  return("Not estimable")
+}
+significance_label<-ifelse(!is.na(p_value)&& is.finite(p_value)&& p_value < SIGNIFICANCE_ALPHA,"statistically significant","not statistically significant")
+if (lower_is_better) {
+  if (estimate < 0) {
+  return(paste0("Favours HSG greater reduction; ", significance_label))
+  }
+  if (estimate > 0) {
+  return(paste0("Favours non-HSG greater reduction; ", significance_label))
+  }
+  return(paste0("No difference; ", significance_label))
+}
+if (!lower_is_better) {
+  if (estimate > 0) {
+  return(paste0("Favours HSG greater increase; ", significance_label))
+  }
+  if (estimate < 0) {
+  return(paste0("Favours non-HSG greater increase; ", significance_label))
+  }
+  return(paste0("No difference; ", significance_label))
+}
+"Not estimable"
+}
+check_file_exists(DATA_PATH, label = "raw encounter dataset")
+if (file.exists(FIGURE_4_PATIENT_LEVEL_IPTW_PATH)) {
+figure4_patient_path<-FIGURE_4_PATIENT_LEVEL_IPTW_PATH
+} else if (file.exists(FIGURE_4_PATIENT_LEVEL_FALLBACK_PATH)) {
+figure4_patient_path<-FIGURE_4_PATIENT_LEVEL_FALLBACK_PATH
+} else {
+stop(
+  "Could not find the Figure 4 IPTW patient-level file.\nChecked:\n",
+  FIGURE_4_PATIENT_LEVEL_IPTW_PATH,
+  "\n",
+  FIGURE_4_PATIENT_LEVEL_FALLBACK_PATH,
+  "\n\nRun the Figure 4 IPTW script first."
+)
+}
+raw_data<-readr::read_csv(DATA_PATH,col_types=readr::cols(.default=readr::col_character()),guess_max=500000,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+data_clean<-raw_data %>% janitor::clean_names()
+figure4_patient_level<-readr::read_csv(figure4_patient_path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))%>% janitor::clean_names() %>% standardize_date_columns()
+if (!"patient" %in% names(data_clean)) {
+stop("The raw dataset must contain patient after janitor::clean_names().")
+}
+if (!"encounter_date" %in% names(data_clean)) {
+stop("The raw dataset must contain encounter_date after janitor::clean_names().")
+}
+if (!"patient" %in% names(figure4_patient_level)) {
+stop("The Figure 4 patient-level IPTW file must contain patient.")
+}
+required_figure4_columns<-c("hsg_exposed","comparison_group","iptw_final","observation_start_date","observation_end_date")
+missing_figure4_columns<-setdiff(required_figure4_columns,names(figure4_patient_level))
+if (length(missing_figure4_columns) > 0) {
+stop(
+  "The Figure 4 patient-level IPTW file is missing required columns:\n",
+  paste0("  - ", paste(missing_figure4_columns, collapse = "\n  - "))
+)
+}
+data_clean<-data_clean %>% mutate(patient=as.character(patient),encounter_date=parse_mixed_date(encounter_date),encounter_month=lubridate::floor_date(encounter_date,unit="month"))
+figure4_patient_level<-figure4_patient_level %>% mutate(patient=as.character(patient),hsg_exposed=as.integer(as.numeric(hsg_exposed)),iptw_final=suppressWarnings(as.numeric(iptw_final)),comparison_group_raw=as.character(comparison_group),comparison_group=dplyr::case_when(hsg_exposed==1 ~ "HSG",hsg_exposed==0 ~ "Non-HSG",stringr::str_detect(stringr::str_to_lower(comparison_group_raw),"^hsg")~ "HSG",TRUE ~ "Non-HSG"),comparison_group=factor(comparison_group,levels=c("HSG","Non-HSG")))
+figure4_patient_level$patient_diabetes_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_diabetes_flag", "diabetes_flag", "diabetes", "denom_diabetes")
+)
+figure4_patient_level$patient_pre_diabetes_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_pre_diabetes_flag", "pre_diabetes_flag", "pre_diabetes")
+)
+figure4_patient_level$patient_hypertension_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_hypertension_flag", "hypertension_flag", "hypertension", "denom_hypertension")
+)
+figure4_patient_level$patient_lipid_disorder_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_lipid_disorder_flag", "lipid_disorder_flag", "lipid_disorder", "denom_lipid_disorder")
+)
+figure4_patient_level$patient_asthma_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_asthma_flag", "asthma_flag", "asthma", "denom_asthma")
+)
+figure4_patient_level$patient_copd_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_copd_flag", "copd_flag", "copd")
+)
+figure4_patient_level$patient_gout_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_gout_flag", "gout_flag", "gout")
+)
+figure4_patient_level$patient_ihd_any_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_ihd_any_flag","patient_ischaemic_heart_disease_flag","patient_ischemic_heart_disease_flag","patient_ihd_flag","ischaemic_heart_disease_flag","ischemic_heart_disease_flag","ihd_flag")
+)
+figure4_patient_level$patient_kidney_disease_flag<-coalesce_bool_columns(
+figure4_patient_level,
+c("patient_kidney_disease_flag","patient_nephritis_nephrosis_flag","patient_chronic_kidney_disease_flag","patient_ckd_flag","nephritis_nephrosis_flag","chronic_kidney_disease_flag","ckd_flag")
+)
+figure4_patient_level<-figure4_patient_level %>% mutate(eligible_all=TRUE,eligible_diabetes=patient_diabetes_flag,eligible_diabetes_or_prediabetes=patient_diabetes_flag | patient_pre_diabetes_flag,eligible_lipid_related=patient_lipid_disorder_flag | patient_diabetes_flag | patient_ihd_any_flag,eligible_kidney_metabolic=patient_diabetes_flag | patient_hypertension_flag | patient_ihd_any_flag | patient_kidney_disease_flag,eligible_gout_kidney_hypertension=patient_gout_flag | patient_kidney_disease_flag | patient_hypertension_flag,eligible_hypertension=patient_hypertension_flag)
+marker_definitions<-tibble::tribble(~marker_id,~marker_label,~source_column,~unit_label,~change_unit_label,~eligibility_col,~eligibility_label,~valid_min,~valid_max,~lower_is_better,"hba1c","HbA1c","clinical_indicators_hb_a1c","%","percentage-points","eligible_diabetes","patients with diabetes",3.0,20.0,TRUE,"fpg","Fasting plasma glucose","clinical_indicators_fpg","mmol/L","mmol/L","eligible_diabetes_or_prediabetes","patients with diabetes or pre-diabetes",2.0,40.0,TRUE,"ogtt","OGTT glucose","clinical_indicators_ogtt","mmol/L","mmol/L","eligible_diabetes_or_prediabetes","patients with diabetes or pre-diabetes",2.0,40.0,TRUE,"ldl_c","LDL-C","clinical_indicators_ldl_c","mmol/L","mmol/L","eligible_lipid_related","patients with lipid disorder, diabetes, or ischaemic heart disease",0.1,20.0,TRUE,"hdl_c","HDL-C","clinical_indicators_hdl_c","mmol/L","mmol/L","eligible_lipid_related","patients with lipid disorder, diabetes, or ischaemic heart disease",0.1,10.0,FALSE,"triglycerides","Triglycerides","clinical_indicators_triglycerides","mmol/L","mmol/L","eligible_lipid_related","patients with lipid disorder, diabetes, or ischaemic heart disease",0.1,100.0,TRUE,"total_cholesterol","Total cholesterol","clinical_indicators_total_cholesterol","mmol/L","mmol/L","eligible_lipid_related","patients with lipid disorder, diabetes, or ischaemic heart disease",0.1,30.0,TRUE,"serum_creatinine","Serum creatinine","clinical_indicators_serum_creatinine","µmol/L","µmol/L","eligible_kidney_metabolic","patients with diabetes, hypertension, IHD, CKD, or nephritis/nephrosis",20.0,2000.0,TRUE,"e_gfr","eGFR","clinical_indicators_e_gfr","mL/min/1.73 m²","mL/min/1.73 m²","eligible_kidney_metabolic","patients with diabetes, hypertension, IHD, CKD, or nephritis/nephrosis",1.0,200.0,FALSE,"u_acr","Urine ACR","clinical_indicators_u_acr","mg/mmol","mg/mmol","eligible_kidney_metabolic","patients with diabetes, hypertension, IHD, CKD, or nephritis/nephrosis",0.0,5000.0,TRUE,"u_pcr","Urine PCR","clinical_indicators_u_pcr","mg/mmol","mg/mmol","eligible_kidney_metabolic","patients with diabetes, hypertension, IHD, CKD, or nephritis/nephrosis",0.0,5000.0,TRUE,"serum_uric_acid","Serum uric acid","clinical_indicators_serum_uric_acid","µmol/L","µmol/L","eligible_gout_kidney_hypertension","patients with gout, kidney disease, or hypertension",50.0,1500.0,TRUE,"systolic_bp","Systolic blood pressure","visits_bmi_systolic_bp","mmHg","mmHg","eligible_hypertension","patients with hypertension",70.0,260.0,TRUE)
+readr::write_csv(marker_definitions,file.path(TABLE_DIR,"marker_definitions.csv"))
+run_one_marker<-function(marker_row) {
+marker_id<-marker_row$marker_id
+marker_label<-marker_row$marker_label
+marker_plot_label<-dplyr::case_when(marker_id=="systolic_bp" ~ "Systolic BP",TRUE ~ marker_label)
+source_column<-marker_row$source_column
+unit_label<-marker_row$unit_label
+change_unit_label<-marker_row$change_unit_label
+eligibility_col<-marker_row$eligibility_col
+eligibility_label<-marker_row$eligibility_label
+valid_min<-as.numeric(marker_row$valid_min)
+valid_max<-as.numeric(marker_row$valid_max)
+lower_is_better<-as.logical(marker_row$lower_is_better)
+marker_slug<-make_slug(marker_id)
+main_figure_jpeg_path<-file.path(MAIN_JPEG_DIR,paste0("longitudinal_",marker_slug,"_spider_trajectory.jpeg"))
+difference_figure_jpeg_path<-file.path(DIFFERENCE_JPEG_DIR,paste0("longitudinal_",marker_slug,"_hsg_minus_nonhsg_difference.jpeg"))
+if (!source_column %in% names(data_clean)) {
+  reason <- paste0("Skipped: source column not found: ", source_column)
+  if (SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS) {
+  placeholder<-make_placeholder_plot(
+  title=marker_label,
+  message_text=reason
+  )
+  save_jpeg_plot(
+  placeholder,
+  main_figure_jpeg_path,
+  FIGURE_WIDTH,
+  FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  save_jpeg_plot(
+  placeholder,
+  difference_figure_jpeg_path,
+  DIFFERENCE_FIGURE_WIDTH,
+  DIFFERENCE_FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  }
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status=reason,n_patients_model=NA_integer_,n_hsg_model=NA_integer_,n_nonhsg_model=NA_integer_,n_measurements_model=NA_integer_,n_outlier_rows_excluded=NA_integer_,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+  )
+}
+if (!eligibility_col %in% names(figure4_patient_level)) {
+  reason <- paste0("Skipped: eligibility column not found in Figure 4 cohort: ", eligibility_col)
+  if (SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS) {
+  placeholder<-make_placeholder_plot(
+  title=marker_label,
+  message_text=reason
+  )
+  save_jpeg_plot(
+  placeholder,
+  main_figure_jpeg_path,
+  FIGURE_WIDTH,
+  FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  save_jpeg_plot(
+  placeholder,
+  difference_figure_jpeg_path,
+  DIFFERENCE_FIGURE_WIDTH,
+  DIFFERENCE_FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  }
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status=reason,n_patients_model=NA_integer_,n_hsg_model=NA_integer_,n_nonhsg_model=NA_integer_,n_measurements_model=NA_integer_,n_outlier_rows_excluded=NA_integer_,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+  )
+}
+marker_eligible_cohort<-figure4_patient_level %>% filter(to_bool_from_csv(.data[[eligibility_col]]),!is.na(hsg_exposed),hsg_exposed %in% c(0L,1L),!is.na(iptw_final),is.finite(iptw_final),iptw_final > 0,!is.na(observation_start_date),!is.na(observation_end_date),observation_end_date >=observation_start_date)%>% mutate(comparison_group=factor(as.character(comparison_group),levels=c("HSG","Non-HSG")))
+if (nrow(marker_eligible_cohort) == 0) {
+  reason <- paste0("Skipped: no eligible patients for ", eligibility_label)
+  if (SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS) {
+  placeholder<-make_placeholder_plot(
+  title=marker_label,
+  message_text=reason
+  )
+  save_jpeg_plot(
+  placeholder,
+  main_figure_jpeg_path,
+  FIGURE_WIDTH,
+  FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  save_jpeg_plot(
+  placeholder,
+  difference_figure_jpeg_path,
+  DIFFERENCE_FIGURE_WIDTH,
+  DIFFERENCE_FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  }
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status=reason,n_patients_model=0L,n_hsg_model=0L,n_nonhsg_model=0L,n_measurements_model=0L,n_outlier_rows_excluded=0L,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+  )
+}
+cleaned_values<-clean_marker_values(
+  x=data_clean[[source_column]],
+  marker_id=marker_id,
+  valid_min=valid_min,
+  valid_max=valid_max
+)
+marker_measurements_raw<-data_clean %>% transmute(patient=patient,encounter_date=encounter_date,encounter_month=encounter_month,raw_value=.data[[source_column]])%>% bind_cols(cleaned_values) %>% filter(!is.na(patient),!is.na(encounter_date),!is.na(marker_value))
+marker_measurements_observed<-marker_measurements_raw %>% semi_join(marker_eligible_cohort %>% select(patient),by="patient")%>% left_join(marker_eligible_cohort %>% select(patient,comparison_group,hsg_exposed,iptw_final,observation_start_date,observation_end_date,age_at_reference,gender_group,ethnicity_group,chas_group,chronic_disease_count),by="patient")%>% filter(encounter_date >=observation_start_date,encounter_date <=observation_end_date)
+marker_patient_date<-marker_measurements_observed %>% group_by(patient,encounter_date,encounter_month,comparison_group,hsg_exposed,iptw_final,observation_start_date,observation_end_date)%>% summarise(marker_value=mean(marker_value,na.rm=TRUE),n_raw_marker_rows_same_date=n(),raw_values_same_date=paste(unique(as.character(raw_value)),collapse=" | "),unit_inferred_same_date=paste(unique(unit_inferred),collapse=" | "),.groups="drop")
+marker_patient_summary<-marker_patient_date %>% arrange(patient,encounter_date) %>% group_by(patient) %>% summarise(n_measurements=n(),first_measurement_date=min(encounter_date,na.rm=TRUE),last_measurement_date=max(encounter_date,na.rm=TRUE),baseline_value=marker_value[which.min(encounter_date)],max_followup_days=as.numeric(last_measurement_date - first_measurement_date),.groups="drop")
+eligible_repeated_patients<-marker_patient_summary %>% filter(n_measurements >=MIN_MEASUREMENTS_PER_PATIENT,max_followup_days >=MIN_FOLLOWUP_DAYS_AFTER_BASELINE)
+marker_longitudinal_initial<-marker_patient_date %>% semi_join(eligible_repeated_patients %>% select(patient),by="patient")%>% arrange(patient,encounter_date) %>% group_by(patient) %>% mutate(measurement_index=row_number(),n_measurements_initial=n(),baseline_date=encounter_date[1],baseline_value=marker_value[1],followup_days=as.numeric(encounter_date - baseline_date),followup_months=followup_days / 30.4375,marker_change_from_baseline=marker_value - baseline_value,is_baseline_measurement=measurement_index==1)%>% ungroup() %>% mutate(baseline_calendar_month=as.numeric(baseline_date - HSG_START_DATE)/ 30.4375,comparison_group=factor(as.character(comparison_group),levels=c("HSG","Non-HSG")))
+if (nrow(marker_longitudinal_initial) == 0) {
+reason<-paste0("Skipped: no patients had at least ",MIN_MEASUREMENTS_PER_PATIENT," valid repeated measurements within the observation window.")
+  if (SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS) {
+  placeholder<-make_placeholder_plot(
+  title=marker_label,
+  message_text=reason
+  )
+  save_jpeg_plot(
+  placeholder,
+  main_figure_jpeg_path,
+  FIGURE_WIDTH,
+  FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  save_jpeg_plot(
+  placeholder,
+  difference_figure_jpeg_path,
+  DIFFERENCE_FIGURE_WIDTH,
+  DIFFERENCE_FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  }
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status=reason,n_patients_model=0L,n_hsg_model=0L,n_nonhsg_model=0L,n_measurements_model=0L,n_outlier_rows_excluded=0L,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+  )
+}
+outlier_bounds<-compute_change_outlier_bounds(
+  marker_longitudinal_initial %>% filter(!is_baseline_measurement) %>% pull(marker_change_from_baseline)
+) %>% mutate(marker_id=marker_id,marker_label=marker_label)
+lower_bound<-outlier_bounds$lower_bound[1]
+upper_bound<-outlier_bounds$upper_bound[1]
+marker_longitudinal_flagged<-marker_longitudinal_initial %>% mutate(outlier_excluded=dplyr::case_when(is_baseline_measurement ~ FALSE,!is.finite(lower_bound)| !is.finite(upper_bound)~ FALSE,marker_change_from_baseline < lower_bound ~ TRUE,marker_change_from_baseline > upper_bound ~ TRUE,TRUE ~ FALSE),outlier_lower_bound=lower_bound,outlier_upper_bound=upper_bound)
+outlier_excluded_rows<-marker_longitudinal_flagged %>% filter(outlier_excluded)
+readr::write_csv(outlier_bounds,file.path(TABLE_DIR,paste0("outlier_bounds_",marker_slug,".csv")))
+readr::write_csv(outlier_excluded_rows,file.path(TABLE_DIR,paste0("outlier_excluded_rows_",marker_slug,".csv")))
+if (PRINT_PER_MARKER_CONSOLE_TABLES) {
+  console_print_table(
+  outlier_bounds %>% transmute(marker_label,lower_bound,upper_bound,q_lower,q_upper,iqr_lower,iqr_upper,n_values_used,outlier_method),
+  title = paste0("Outlier bounds: ", marker_label)
+  )
+}
+marker_longitudinal<-marker_longitudinal_flagged %>% filter(!outlier_excluded) %>% group_by(patient) %>% mutate(n_measurements_after_outlier_exclusion=n(),max_followup_days_after_outlier_exclusion=max(followup_days,na.rm=TRUE),has_followup_after_outlier_exclusion=any(!is_baseline_measurement & followup_days >=MIN_FOLLOWUP_DAYS_AFTER_BASELINE))%>% ungroup() %>% filter(n_measurements_after_outlier_exclusion >=MIN_MEASUREMENTS_PER_PATIENT,has_followup_after_outlier_exclusion)%>% mutate(n_measurements=n_measurements_after_outlier_exclusion)
+n_outlier_rows_excluded<-nrow(outlier_excluded_rows)
+if (nrow(marker_longitudinal) == 0) {
+  reason <- "Skipped: no repeated-measures patients remained after outlier exclusion."
+  if (SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS) {
+  placeholder<-make_placeholder_plot(
+  title=marker_label,
+  message_text=reason
+  )
+  save_jpeg_plot(
+  placeholder,
+  main_figure_jpeg_path,
+  FIGURE_WIDTH,
+  FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  save_jpeg_plot(
+  placeholder,
+  difference_figure_jpeg_path,
+  DIFFERENCE_FIGURE_WIDTH,
+  DIFFERENCE_FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  }
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status=reason,n_patients_model=0L,n_hsg_model=0L,n_nonhsg_model=0L,n_measurements_model=0L,n_outlier_rows_excluded=n_outlier_rows_excluded,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+  )
+}
+if (RENORMALIZE_WEIGHTS_WITHIN_MARKER_COHORT) {
+  patient_weight_normalizer<-marker_longitudinal %>% distinct(patient,iptw_final) %>% summarise(mean_weight=mean(iptw_final,na.rm=TRUE)) %>% pull(mean_weight)
+  marker_longitudinal<-marker_longitudinal %>% mutate(iptw_marker=iptw_final / patient_weight_normalizer)
+} else {
+  marker_longitudinal<-marker_longitudinal %>% mutate(iptw_marker=iptw_final)
+}
+model_data<-marker_longitudinal %>% filter(
+  if (INCLUDE_BASELINE_ROW_IN_CHANGE_MODEL) {
+  TRUE
+  } else {
+  !is_baseline_measurement
+  }
+  ) %>% filter(!is.na(marker_change_from_baseline),!is.na(followup_months),!is.na(baseline_value),!is.na(baseline_calendar_month),!is.na(hsg_exposed),!is.na(iptw_marker),is.finite(iptw_marker),iptw_marker > 0)%>% arrange(patient,followup_months,encounter_date)
+group_counts<-model_data %>% distinct(patient,comparison_group) %>% count(comparison_group, name = "patients") %>% tidyr::complete(
+  comparison_group = factor(c("HSG", "Non-HSG"), levels = c("HSG", "Non-HSG")),
+  fill=list(patients=0)
+  )
+n_patients_model<-dplyr::n_distinct(model_data$patient)
+n_measurements_model<-nrow(model_data)
+n_hsg_model<-group_counts %>% filter(comparison_group == "HSG") %>% pull(patients)
+n_nonhsg_model<-group_counts %>% filter(comparison_group == "Non-HSG") %>% pull(patients)
+if (
+  n_patients_model < MIN_TOTAL_PATIENTS_FOR_MODEL ||
+  n_measurements_model < MIN_TOTAL_MEASUREMENTS_FOR_MODEL ||
+  n_hsg_model < MIN_PATIENTS_PER_GROUP_FOR_MODEL ||
+  n_nonhsg_model < MIN_PATIENTS_PER_GROUP_FOR_MODEL
+) {
+reason<-paste0("Skipped: insufficient repeated-measures data after outlier exclusion.\n","Patients: total ",fmt_n(n_patients_model),", HSG ",fmt_n(n_hsg_model),", Non-HSG ",fmt_n(n_nonhsg_model),". Measurements: ",fmt_n(n_measurements_model),". Outlier rows excluded: ",fmt_n(n_outlier_rows_excluded),".")
+  if (SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS) {
+  placeholder<-make_placeholder_plot(
+  title=marker_label,
+  message_text=reason
+  )
+  save_jpeg_plot(
+  placeholder,
+  main_figure_jpeg_path,
+  FIGURE_WIDTH,
+  FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  save_jpeg_plot(
+  placeholder,
+  difference_figure_jpeg_path,
+  DIFFERENCE_FIGURE_WIDTH,
+  DIFFERENCE_FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  }
+readr::write_csv(marker_longitudinal,file.path(TABLE_DIR,paste0("longitudinal_data_",marker_slug,"_not_modelled.csv")))
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status=reason,n_patients_model=n_patients_model,n_hsg_model=n_hsg_model,n_nonhsg_model=n_nonhsg_model,n_measurements_model=n_measurements_model,n_outlier_rows_excluded=n_outlier_rows_excluded,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+  )
+}
+readr::write_csv(marker_longitudinal,file.path(TABLE_DIR,paste0("longitudinal_data_outlier_excluded_",marker_slug,".csv")))
+readr::write_csv(model_data,file.path(TABLE_DIR,paste0("model_data_outlier_excluded_",marker_slug,".csv")))
+time_basis_info<-create_time_basis(
+  data=model_data,
+  requested_df=TIME_SPLINE_DF
+)
+model_data<-time_basis_info$data
+time_basis_columns<-time_basis_info$basis_columns
+weighted_baseline_value_mean<-model_data %>% distinct(patient,baseline_value,iptw_marker) %>% summarise(value=weighted_mean(baseline_value,iptw_marker)) %>% pull(value)
+weighted_baseline_calendar_mean<-model_data %>% distinct(patient,baseline_calendar_month,iptw_marker) %>% summarise(value=weighted_mean(baseline_calendar_month,iptw_marker)) %>% pull(value)
+model_data<-model_data %>% mutate(baseline_value_centered=baseline_value - weighted_baseline_value_mean,baseline_calendar_month_centered=baseline_calendar_month - weighted_baseline_calendar_mean,patient=as.factor(patient),hsg_exposed=as.integer(hsg_exposed))%>% arrange(patient,followup_months,encounter_date)
+time_formula_part <- paste(time_basis_columns, collapse = " + ")
+covariate_terms<-c()
+if (
+  isTRUE(ADJUST_FOR_BASELINE_MARKER_VALUE) &&
+  is.finite(stats::var(model_data$baseline_value_centered,na.rm=TRUE)) &&
+  stats::var(model_data$baseline_value_centered,na.rm=TRUE) > 0
+) {
+  covariate_terms <- c(covariate_terms, "baseline_value_centered")
+}
+if (
+  isTRUE(ADJUST_FOR_BASELINE_CALENDAR_TIME) &&
+  is.finite(stats::var(model_data$baseline_calendar_month_centered,na.rm=TRUE)) &&
+  stats::var(model_data$baseline_calendar_month_centered,na.rm=TRUE) > 0
+) {
+  covariate_terms <- c(covariate_terms, "baseline_calendar_month_centered")
+}
+rhs_terms<-c(paste0("hsg_exposed * (",time_formula_part,")"),covariate_terms)
+primary_formula<-stats::as.formula(paste0("marker_change_from_baseline ~ ",paste(rhs_terms,collapse=" + ")))
+gee_fit<-tryCatch(
+  {
+geepack::geeglm(formula=primary_formula,id=patient,waves=measurement_index,data=model_data,weights=iptw_marker,family=gaussian(link="identity"),corstr=GEE_CORRELATION_STRUCTURE,std.err="san.se")
+  },
+  error=function(e) {
+  e
+  }
+)
+if (inherits(gee_fit, "error")) {
+  reason <- paste0("Skipped: GEE model failed: ", conditionMessage(gee_fit))
+  if (SAVE_PLACEHOLDERS_FOR_SKIPPED_MARKERS) {
+  placeholder<-make_placeholder_plot(
+  title=marker_label,
+  message_text=reason
+  )
+  save_jpeg_plot(
+  placeholder,
+  main_figure_jpeg_path,
+  FIGURE_WIDTH,
+  FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  save_jpeg_plot(
+  placeholder,
+  difference_figure_jpeg_path,
+  DIFFERENCE_FIGURE_WIDTH,
+  DIFFERENCE_FIGURE_HEIGHT,
+  FIGURE_DPI
+  )
+  }
+  return(
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status=reason,n_patients_model=n_patients_model,n_hsg_model=n_hsg_model,n_nonhsg_model=n_nonhsg_model,n_measurements_model=n_measurements_model,n_outlier_rows_excluded=n_outlier_rows_excluded,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+  )
+}
+model_tidy<-broom::tidy(gee_fit) %>% mutate(marker_id=marker_id,marker_label=marker_label,model="IPTW-weighted GEE: marker change from index test after outlier exclusion",adjusted_for_baseline_marker_value=ADJUST_FOR_BASELINE_MARKER_VALUE,adjusted_for_baseline_calendar_time=ADJUST_FOR_BASELINE_CALENDAR_TIME)
+readr::write_csv(model_tidy,file.path(TABLE_DIR,paste0("gee_coefficients_",marker_slug,".csv")))
+saveRDS(
+  gee_fit,
+  file.path(MODEL_DIR, paste0("gee_model_", marker_slug, ".rds"))
+)
+marker_group_summary<-model_data %>% distinct(
+  patient,
+  comparison_group,
+  hsg_exposed,
+  iptw_marker,
+  baseline_value,
+  baseline_date,
+  n_measurements
+  ) %>% group_by(comparison_group) %>% summarise(marker_id=marker_id,marker_label=marker_label,patients=n(),weighted_patients=sum(iptw_marker,na.rm=TRUE),median_measurements_per_patient=median(n_measurements,na.rm=TRUE),q1_measurements_per_patient=quantile(n_measurements,0.25,na.rm=TRUE),q3_measurements_per_patient=quantile(n_measurements,0.75,na.rm=TRUE),mean_baseline_unweighted=mean(baseline_value,na.rm=TRUE),mean_baseline_weighted=weighted_mean(baseline_value,iptw_marker),median_baseline=median(baseline_value,na.rm=TRUE),.groups="drop")%>% select(marker_id,marker_label,comparison_group,everything())
+readr::write_csv(marker_group_summary,file.path(TABLE_DIR,paste0("group_summary_",marker_slug,".csv")))
+if (PRINT_PER_MARKER_CONSOLE_TABLES) {
+  console_print_table(
+  marker_group_summary %>% mutate(weighted_patients=round(weighted_patients,1),mean_baseline_unweighted=round(mean_baseline_unweighted,2),mean_baseline_weighted=round(mean_baseline_weighted,2),median_baseline=round(median_baseline,2)),
+  title = paste0("Group summary: ", marker_label)
+  )
+}
+make_prediction_newdata<-function(group_value,followup_month_values) {
+out<-tibble::tibble(followup_months=followup_month_values,hsg_exposed=as.integer(group_value),baseline_value=weighted_baseline_value_mean,baseline_value_centered=0,baseline_calendar_month=weighted_baseline_calendar_mean,baseline_calendar_month_centered=0,comparison_group=factor(ifelse(group_value==1,"HSG","Non-HSG"),levels=c("HSG","Non-HSG")))
+  add_time_basis_to_newdata(
+  newdata=out,
+  time_basis_info=time_basis_info
+  )
+}
+max_followup_months_observed<-max(model_data$followup_months,na.rm=TRUE)
+max_followup_for_plot<-min(max_followup_months_observed,MAX_PLOT_FOLLOWUP_MONTHS)
+prediction_months<-seq(
+  from=0,
+  to=max_followup_for_plot,
+  by=PREDICTION_GRID_MONTH_INTERVAL
+)
+prediction_data<-bind_rows(make_prediction_newdata(group_value=1,followup_month_values=prediction_months),make_prediction_newdata(group_value=0,followup_month_values=prediction_months))
+prediction_curves<-predict_gee_identity(
+  fit=gee_fit,
+  newdata=prediction_data
+) %>% mutate(comparison_group=factor(comparison_group,levels=c("HSG","Non-HSG")),marker_id=marker_id,marker_label=marker_label)
+readr::write_csv(prediction_curves,file.path(TABLE_DIR,paste0("prediction_curves_",marker_slug,".csv")))
+hsg_prediction_grid<-make_prediction_newdata(
+  group_value=1,
+  followup_month_values=prediction_months
+)
+nonhsg_prediction_grid<-make_prediction_newdata(
+  group_value=0,
+  followup_month_values=prediction_months
+)
+difference_curve<-contrast_gee_identity(
+  fit=gee_fit,
+  newdata_a=hsg_prediction_grid,
+  newdata_b=nonhsg_prediction_grid,
+  contrast_label = "HSG minus Non-HSG"
+) %>% mutate(followup_months=prediction_months,marker_id=marker_id,marker_label=marker_label,unit=change_unit_label,interpretation=ifelse(lower_is_better,"Negative values indicate greater reduction in HSG than non-HSG","Positive values indicate greater increase in HSG than non-HSG"))%>% select(marker_id,marker_label,followup_months,contrast,estimate,std_error,conf_low,conf_high,p_value,unit,interpretation)
+readr::write_csv(difference_curve,file.path(TABLE_DIR,paste0("difference_curve_",marker_slug,".csv")))
+summary_effect_rows<-list()
+summary_effect_index<-1L
+if (COMPUTE_GLOBAL_WALD_TESTS) {
+trajectory_wald_tests<-bind_rows(wald_test_gee_terms(fit=gee_fit,term_regex="^hsg_exposed$|^hsg_exposed:|:hsg_exposed",test_label="Global HSG trajectory test: main HSG term plus HSG-by-time terms",marker_id=marker_id,marker_label=marker_label),wald_test_gee_terms(fit=gee_fit,term_regex="^hsg_exposed:|:hsg_exposed",test_label="Time-varying HSG effect test: HSG-by-time interaction terms only",marker_id=marker_id,marker_label=marker_label))
+} else {
+trajectory_wald_tests<-tibble::tibble(marker_id=character(0),marker_label=character(0),test_label=character(0),terms_tested=character(0),n_terms=integer(0),chisq=numeric(0),df=integer(0),p_value=numeric(0),p_print=character(0),test_status=character(0))
+}
+readr::write_csv(trajectory_wald_tests,file.path(TABLE_DIR,paste0("trajectory_wald_tests_",marker_slug,".csv")))
+horizons_to_use<-SUMMARY_EFFECT_HORIZONS_MONTHS[
+  SUMMARY_EFFECT_HORIZONS_MONTHS > 0 &
+  SUMMARY_EFFECT_HORIZONS_MONTHS <= max_followup_for_plot
+]
+if (length(horizons_to_use) > 0) {
+  for (this_horizon in horizons_to_use) {
+  if (COMPUTE_UNIFORM_TIME_AVERAGED_EFFECTS) {
+  uniform_months<-seq(
+  from=0,
+  to=this_horizon,
+  by=SUMMARY_EFFECT_GRID_INTERVAL_MONTHS
+  )
+  if (tail(uniform_months,1) < this_horizon) {
+  uniform_months<-c(uniform_months,this_horizon)
+  }
+  new_hsg_uniform<-make_prediction_newdata(
+  group_value=1,
+  followup_month_values=uniform_months
+  )
+  new_nonhsg_uniform<-make_prediction_newdata(
+  group_value=0,
+  followup_month_values=uniform_months
+  )
+  uniform_average_effect<-contrast_gee_average_identity(
+  fit=gee_fit,
+  newdata_a=new_hsg_uniform,
+  newdata_b=new_nonhsg_uniform,
+  averaging_weights=rep(1,length(uniform_months)),
+  contrast_label = "HSG minus Non-HSG",
+  estimand_type = "Uniform time-averaged difference",
+  averaging_method = paste0("Uniform average over 0-", this_horizon, " months"),
+  horizon_start_month=0,
+  horizon_end_month=this_horizon,
+  unit_label=change_unit_label,
+  lower_is_better=lower_is_better
+  ) %>% mutate(marker_id=marker_id,marker_label=marker_label)%>% select(marker_id,marker_label,everything())
+  summary_effect_rows[[summary_effect_index]]<-uniform_average_effect
+  summary_effect_index<-summary_effect_index + 1L
+  if (COMPUTE_AUC_DIFFERENCE_EFFECTS) {
+  auc_effect<-convert_average_effect_to_auc(
+    average_effect_row=uniform_average_effect,
+    unit_label=change_unit_label,
+    lower_is_better=lower_is_better
+  )
+  summary_effect_rows[[summary_effect_index]]<-auc_effect
+  summary_effect_index<-summary_effect_index + 1L
+  }
+  }
+  if (
+  COMPUTE_POSTBASELINE_TIME_AVERAGED_EFFECTS &&
+  this_horizon > SUMMARY_EFFECT_POSTBASELINE_START_MONTH
+  ) {
+  postbaseline_months<-seq(
+  from=SUMMARY_EFFECT_POSTBASELINE_START_MONTH,
+  to=this_horizon,
+  by=SUMMARY_EFFECT_GRID_INTERVAL_MONTHS
+  )
+  if (tail(postbaseline_months,1) < this_horizon) {
+  postbaseline_months<-c(postbaseline_months,this_horizon)
+  }
+  new_hsg_postbaseline<-make_prediction_newdata(
+  group_value=1,
+  followup_month_values=postbaseline_months
+  )
+  new_nonhsg_postbaseline<-make_prediction_newdata(
+  group_value=0,
+  followup_month_values=postbaseline_months
+  )
+  postbaseline_average_effect<-contrast_gee_average_identity(
+  fit=gee_fit,
+  newdata_a=new_hsg_postbaseline,
+  newdata_b=new_nonhsg_postbaseline,
+  averaging_weights=rep(1,length(postbaseline_months)),
+  contrast_label = "HSG minus Non-HSG",
+  estimand_type = "Post-baseline uniform time-averaged difference",
+averaging_method=paste0("Uniform average over ",SUMMARY_EFFECT_POSTBASELINE_START_MONTH,"-",this_horizon," months"),
+  horizon_start_month=SUMMARY_EFFECT_POSTBASELINE_START_MONTH,
+  horizon_end_month=this_horizon,
+  unit_label=change_unit_label,
+  lower_is_better=lower_is_better
+  ) %>% mutate(marker_id=marker_id,marker_label=marker_label)%>% select(marker_id,marker_label,everything())
+  summary_effect_rows[[summary_effect_index]]<-postbaseline_average_effect
+  summary_effect_index<-summary_effect_index + 1L
+  }
+  }
+}
+if (COMPUTE_OBSERVED_TIME_AVERAGED_EFFECTS) {
+  observed_time_data<-model_data %>% filter(!is_baseline_measurement,followup_months > 0,followup_months <=max_followup_for_plot,!is.na(iptw_marker),is.finite(iptw_marker),iptw_marker > 0)
+  observed_time_support<-observed_time_data %>% group_by(comparison_group) %>% summarise(patients=dplyr::n_distinct(patient),rows=n(),.groups="drop")%>% tidyr::complete(
+  comparison_group = factor(c("HSG", "Non-HSG"), levels = c("HSG", "Non-HSG")),
+  fill=list(patients=0L,rows=0L)
+  )
+  observed_time_hsg_patients<-observed_time_support %>% filter(comparison_group == "HSG") %>% pull(patients)
+  observed_time_nonhsg_patients<-observed_time_support %>% filter(comparison_group == "Non-HSG") %>% pull(patients)
+  if (
+  nrow(observed_time_data) >= MIN_OBSERVED_AVERAGE_ROWS &&
+  observed_time_hsg_patients >= MIN_OBSERVED_AVERAGE_PATIENTS &&
+  observed_time_nonhsg_patients >= MIN_OBSERVED_AVERAGE_PATIENTS
+  ) {
+  observed_hsg_newdata<-make_prediction_newdata(
+  group_value=1,
+  followup_month_values=observed_time_data$followup_months
+  )
+  observed_nonhsg_newdata<-make_prediction_newdata(
+  group_value=0,
+  followup_month_values=observed_time_data$followup_months
+  )
+  observed_measurement_weighted_effect<-contrast_gee_average_identity(
+  fit=gee_fit,
+  newdata_a=observed_hsg_newdata,
+  newdata_b=observed_nonhsg_newdata,
+  averaging_weights=observed_time_data$iptw_marker,
+  contrast_label = "HSG minus Non-HSG",
+  estimand_type = "Observed-time weighted average difference",
+  averaging_method = "Weighted by IPTW across observed post-index measurement rows",
+  horizon_start_month=min(observed_time_data$followup_months,na.rm=TRUE),
+  horizon_end_month=max(observed_time_data$followup_months,na.rm=TRUE),
+  unit_label=change_unit_label,
+  lower_is_better=lower_is_better,
+  n_support_patients_hsg=observed_time_hsg_patients,
+  n_support_patients_nonhsg=observed_time_nonhsg_patients,
+  n_support_rows=nrow(observed_time_data)
+  ) %>% mutate(marker_id=marker_id,marker_label=marker_label)%>% select(marker_id,marker_label,everything())
+  summary_effect_rows[[summary_effect_index]]<-observed_measurement_weighted_effect
+  summary_effect_index<-summary_effect_index + 1L
+  patient_balanced_time_data<-observed_time_data %>% group_by(patient) %>% mutate(patient_balanced_weight=dplyr::first(iptw_marker)/ n())%>% ungroup()
+  patient_balanced_hsg_newdata<-make_prediction_newdata(
+  group_value=1,
+  followup_month_values=patient_balanced_time_data$followup_months
+  )
+  patient_balanced_nonhsg_newdata<-make_prediction_newdata(
+  group_value=0,
+  followup_month_values=patient_balanced_time_data$followup_months
+  )
+  patient_balanced_observed_effect<-contrast_gee_average_identity(
+  fit=gee_fit,
+  newdata_a=patient_balanced_hsg_newdata,
+  newdata_b=patient_balanced_nonhsg_newdata,
+  averaging_weights=patient_balanced_time_data$patient_balanced_weight,
+  contrast_label = "HSG minus Non-HSG",
+  estimand_type = "Patient-balanced observed-time average difference",
+  averaging_method = "Each patient's observed post-index times are balanced before IPTW averaging",
+  horizon_start_month=min(patient_balanced_time_data$followup_months,na.rm=TRUE),
+  horizon_end_month=max(patient_balanced_time_data$followup_months,na.rm=TRUE),
+  unit_label=change_unit_label,
+  lower_is_better=lower_is_better,
+  n_support_patients_hsg=observed_time_hsg_patients,
+  n_support_patients_nonhsg=observed_time_nonhsg_patients,
+  n_support_rows=nrow(patient_balanced_time_data)
+  ) %>% mutate(marker_id=marker_id,marker_label=marker_label)%>% select(marker_id,marker_label,everything())
+  summary_effect_rows[[summary_effect_index]]<-patient_balanced_observed_effect
+  summary_effect_index<-summary_effect_index + 1L
+  }
+}
+if (COMPUTE_CONSTANT_EFFECT_SENSITIVITY_MODEL) {
+  constant_rhs_terms<-unique(
+c("hsg_exposed",time_basis_columns,covariate_terms)
+  )
+constant_formula<-stats::as.formula(paste0("marker_change_from_baseline ~ ",paste(constant_rhs_terms,collapse=" + ")))
+  constant_gee_fit<-tryCatch(
+  {
+geepack::geeglm(formula=constant_formula,id=patient,waves=measurement_index,data=model_data,weights=iptw_marker,family=gaussian(link="identity"),corstr=GEE_CORRELATION_STRUCTURE,std.err="san.se")
+  },
+  error=function(e) {
+  e
+  }
+  )
+  if (!inherits(constant_gee_fit, "error")) {
+  constant_model_tidy<-broom::tidy(constant_gee_fit) %>% mutate(marker_id=marker_id,marker_label=marker_label,model="Sensitivity IPTW-weighted GEE: constant HSG effect over follow-up")
+readr::write_csv(constant_model_tidy,file.path(TABLE_DIR,paste0("constant_effect_gee_coefficients_",marker_slug,".csv")))
+  saveRDS(
+  constant_gee_fit,
+  file.path(MODEL_DIR, paste0("constant_effect_gee_model_", marker_slug, ".rds"))
+  )
+  constant_hsg_row<-constant_model_tidy %>% filter(term == "hsg_exposed")
+  if (nrow(constant_hsg_row) == 1) {
+  constant_estimate<-constant_hsg_row$estimate[1]
+  constant_se<-constant_hsg_row$std.error[1]
+  constant_conf_low<-constant_estimate - stats::qnorm(0.975) * constant_se
+  constant_conf_high<-constant_estimate + stats::qnorm(0.975) * constant_se
+constant_p<-ifelse(!is.na(constant_se)&& is.finite(constant_se)&& constant_se > 0,2 * stats::pnorm(abs(constant_estimate / constant_se),lower.tail=FALSE),NA_real_)
+constant_effect_summary<-tibble::tibble(marker_id=marker_id,marker_label=marker_label,contrast="HSG minus Non-HSG",estimand_type="Constant-effect GEE sensitivity coefficient",averaging_method="Single HSG coefficient from model without HSG-by-time interaction",horizon_start_month=0,horizon_end_month=max_followup_for_plot,horizon_duration_months=max_followup_for_plot,estimate=constant_estimate,std_error=constant_se,conf_low=constant_conf_low,conf_high=constant_conf_high,p_value=constant_p,unit=change_unit_label,estimate_print=fmt_ci(estimate=constant_estimate,conf_low=constant_conf_low,conf_high=constant_conf_high,digits=2),p_print=fmt_p(constant_p,digits=3),n_time_points=NA_integer_,n_averaging_rows=nrow(model_data),n_support_patients_hsg=n_hsg_model,n_support_patients_nonhsg=n_nonhsg_model,n_support_rows=nrow(model_data),interpretation=classify_effect_direction(estimate=constant_estimate,p_value=constant_p,lower_is_better=lower_is_better))
+  summary_effect_rows[[summary_effect_index]]<-constant_effect_summary
+  summary_effect_index<-summary_effect_index + 1L
+  }
+  } else {
+constant_model_failure<-tibble::tibble(marker_id=marker_id,marker_label=marker_label,model="Sensitivity IPTW-weighted GEE: constant HSG effect over follow-up",status=paste0("Model failed: ",conditionMessage(constant_gee_fit)))
+readr::write_csv(constant_model_failure,file.path(TABLE_DIR,paste0("constant_effect_gee_failure_",marker_slug,".csv")))
+  }
+}
+if (length(summary_effect_rows) > 0) {
+  summary_effects<-bind_rows(summary_effect_rows) %>% mutate(significant=!is.na(p_value)& p_value < SIGNIFICANCE_ALPHA)%>% arrange(marker_label,factor(estimand_type,levels=c("Uniform time-averaged difference","Post-baseline uniform time-averaged difference","Area under HSG-minus-non-HSG difference curve","Observed-time weighted average difference","Patient-balanced observed-time average difference","Constant-effect GEE sensitivity coefficient")),horizon_start_month,horizon_end_month)
+} else {
+summary_effects<-tibble::tibble(marker_id=character(0),marker_label=character(0),contrast=character(0),estimand_type=character(0),averaging_method=character(0),horizon_start_month=numeric(0),horizon_end_month=numeric(0),horizon_duration_months=numeric(0),estimate=numeric(0),std_error=numeric(0),conf_low=numeric(0),conf_high=numeric(0),p_value=numeric(0),unit=character(0),estimate_print=character(0),p_print=character(0),n_time_points=integer(0),n_averaging_rows=integer(0),n_support_patients_hsg=numeric(0),n_support_patients_nonhsg=numeric(0),n_support_rows=numeric(0),interpretation=character(0),significant=logical(0))
+}
+readr::write_csv(summary_effects,file.path(TABLE_DIR,paste0("summary_effects_",marker_slug,".csv")))
+if (PRINT_PER_MARKER_CONSOLE_TABLES) {
+  console_print_table(
+  trajectory_wald_tests %>% transmute(marker_label,test_label,n_terms,chisq,df,p_value,p_print,test_status,terms_tested),
+  title = paste0("Global trajectory tests: ", marker_label)
+  )
+  console_print_table(
+  summary_effects %>% transmute(marker_label,estimand_type,averaging_method,horizon_start_month,horizon_end_month,estimate,std_error,conf_low,conf_high,estimate_95ci=estimate_print,p_value,p_print,significant,unit,n_averaging_rows,n_support_patients_hsg,n_support_patients_nonhsg,n_support_rows,interpretation),
+  title = paste0("Overall / summary effect-size estimates: ", marker_label)
+  )
+}
+point_data<-model_data %>% filter(followup_months <=max_followup_for_plot)
+if (!SHOW_BASELINE_POINTS) {
+  point_data<-point_data %>% filter(!is_baseline_measurement)
+}
+point_data<-point_data %>% mutate(point_alpha=dplyr::case_when(comparison_group=="Non-HSG" ~ POINT_ALPHA_NONHSG,comparison_group=="HSG" ~ POINT_ALPHA_HSG,TRUE ~ POINT_ALPHA_HSG),point_shape=dplyr::case_when(comparison_group=="Non-HSG" ~ POINT_SHAPE_NONHSG,comparison_group=="HSG" ~ POINT_SHAPE_HSG,TRUE ~ POINT_SHAPE_HSG),point_size=dplyr::case_when(comparison_group=="Non-HSG" ~ POINT_SIZE_NONHSG,comparison_group=="HSG" ~ POINT_SIZE_HSG,TRUE ~ POINT_SIZE_HSG))%>% group_by(comparison_group) %>% group_modify(
+  ~ sample_points_within_group(
+  df=.x,
+  max_points_per_group=MAX_POINTS_PER_GROUP
+  )
+  ) %>% ungroup()
+readr::write_csv(point_data,file.path(TABLE_DIR,paste0("plotted_individual_points_",marker_slug,".csv")))
+if (SHOW_SPIDER_LINES) {
+  spider_patient_pool<-model_data %>% filter(followup_months <=max_followup_for_plot)%>% distinct(
+  patient,
+  comparison_group
+  )
+  spider_patients<-spider_patient_pool %>% group_by(comparison_group) %>% group_modify(
+  ~ sample_patients_within_group(
+  df=.x,
+  max_patients_per_group=MAX_SPIDER_PATIENTS_PER_GROUP
+  )
+  ) %>% ungroup()
+  spider_line_data<-model_data %>% filter(followup_months <=max_followup_for_plot)%>% semi_join(spider_patients %>% select(patient),by="patient")%>% group_by(patient) %>% filter(n() >= 2) %>% arrange(patient,followup_months,encounter_date) %>% ungroup()
+} else {
+  spider_patients<-tibble::tibble()
+  spider_line_data<-tibble::tibble()
+}
+readr::write_csv(spider_line_data,file.path(TABLE_DIR,paste0("spider_line_data_",marker_slug,".csv")))
+risk_times<-make_risk_times(max_followup_for_plot)
+number_at_risk_data<-make_number_at_risk_data(
+  model_data=model_data,
+  risk_times=risk_times,
+  marker_id=marker_id,
+  marker_label=marker_label
+)
+readr::write_csv(number_at_risk_data,file.path(TABLE_DIR,paste0("risk_set_",marker_slug,".csv")))
+if (PRINT_PER_MARKER_CONSOLE_TABLES) {
+  console_print_table(
+  number_at_risk_data,
+  title = paste0("Risk set: ", marker_label)
+  )
+}
+landmark_support<-purrr::map_dfr(
+  LANDMARK_MONTHS,
+  function(this_month) {
+  model_data %>% filter(abs(followup_months - this_month)<=LANDMARK_SUPPORT_WINDOW_MONTHS)%>% group_by(comparison_group) %>% summarise(landmark_month=this_month,support_patients=dplyr::n_distinct(patient),support_measurements=n(),.groups="drop")
+  }
+) %>% tidyr::complete(
+  landmark_month=LANDMARK_MONTHS,
+  comparison_group = factor(c("HSG", "Non-HSG"), levels = c("HSG", "Non-HSG")),
+fill=list(support_patients=0,support_measurements=0)
+  )
+landmark_support_wide<-landmark_support %>% mutate(comparison_key=ifelse(comparison_group=="HSG","hsg","nonhsg"))%>% select(landmark_month,comparison_key,support_patients,support_measurements)%>% pivot_wider(
+  names_from=comparison_key,
+  values_from=c(support_patients,support_measurements),
+  names_glue = "{.value}_{comparison_key}"
+  )
+landmarks_to_model<-landmark_support %>% group_by(landmark_month) %>% summarise(min_support_patients=min(support_patients,na.rm=TRUE),.groups="drop")%>% filter(landmark_month <=max_followup_for_plot,min_support_patients >=MIN_PATIENTS_PER_GROUP_FOR_LANDMARK_SUPPORT)%>% pull(landmark_month)
+if (length(landmarks_to_model) > 0) {
+landmark_prediction_data<-bind_rows(make_prediction_newdata(group_value=1,followup_month_values=landmarks_to_model),make_prediction_newdata(group_value=0,followup_month_values=landmarks_to_model))
+  landmark_predictions<-predict_gee_identity(
+  fit=gee_fit,
+  newdata=landmark_prediction_data
+  ) %>% mutate(marker_id=marker_id,marker_label=marker_label,comparison_group=factor(comparison_group,levels=c("HSG","Non-HSG")),landmark_month=followup_months,x_plot=dplyr::case_when(comparison_group=="HSG" ~ landmark_month - LANDMARK_DODGE_MONTHS,comparison_group=="Non-HSG" ~ landmark_month + LANDMARK_DODGE_MONTHS,TRUE ~ landmark_month),estimate_ci=fmt_ci(estimate=estimate,conf_low=conf_low,conf_high=conf_high,digits=2),point_shape=dplyr::case_when(comparison_group=="HSG" ~ LANDMARK_POINT_SHAPE_HSG,comparison_group=="Non-HSG" ~ LANDMARK_POINT_SHAPE_NONHSG,TRUE ~ LANDMARK_POINT_SHAPE_HSG))%>% left_join(landmark_support_wide,by="landmark_month")
+  landmark_connector_data<-landmark_predictions %>% select(landmark_month,comparison_group,x_plot,estimate)%>% pivot_wider(names_from=comparison_group,values_from=c(x_plot,estimate))%>% rename(x_hsg=x_plot_HSG,x_nonhsg=`x_plot_Non-HSG`,y_hsg=estimate_HSG,y_nonhsg=`estimate_Non-HSG`)
+  landmark_contrasts<-purrr::map_dfr(
+  landmarks_to_model,
+  function(this_month) {
+  new_hsg<-make_prediction_newdata(
+  group_value=1,
+  followup_month_values=this_month
+  )
+  new_nonhsg<-make_prediction_newdata(
+  group_value=0,
+  followup_month_values=this_month
+  )
+  contrast_gee_identity(
+  fit=gee_fit,
+  newdata_a=new_hsg,
+  newdata_b=new_nonhsg,
+  contrast_label = "HSG minus Non-HSG"
+  ) %>% mutate(landmark_month=this_month)
+  }
+  ) %>% left_join(landmark_support_wide,by="landmark_month")%>% mutate(
+  marker_id=marker_id,
+  marker_label=marker_label,
+  unit=change_unit_label,
+  estimate_print=fmt_ci(
+  estimate=estimate,
+  conf_low=conf_low,
+  conf_high=conf_high,
+  digits=2
+  ),
+  p_print=fmt_p(p_value,digits=3),
+  significant=!is.na(p_value) & p_value < SIGNIFICANCE_ALPHA,
+  interpretation=vapply(
+  seq_along(estimate),
+  function(j) {
+    classify_effect_direction(
+    estimate=estimate[j],
+    p_value=p_value[j],
+    lower_is_better=lower_is_better
+    )
+  },
+  character(1)
+  )
+  ) %>% select(marker_id,marker_label,landmark_month,contrast,estimate,std_error,conf_low,conf_high,p_value,significant,unit,estimate_print,p_print,support_patients_hsg,support_patients_nonhsg,support_measurements_hsg,support_measurements_nonhsg,interpretation)
+} else {
+  landmark_predictions<-make_empty_landmark_predictions(marker_id,marker_label)
+  landmark_connector_data<-tibble::tibble()
+  landmark_contrasts<-make_empty_landmark_contrasts(marker_id,marker_label)
+}
+readr::write_csv(landmark_support,file.path(TABLE_DIR,paste0("landmark_support_",marker_slug,".csv")))
+readr::write_csv(landmark_predictions,file.path(TABLE_DIR,paste0("landmark_predictions_",marker_slug,".csv")))
+readr::write_csv(landmark_contrasts,file.path(TABLE_DIR,paste0("landmark_effect_sizes_",marker_slug,".csv")))
+if (PRINT_PER_MARKER_CONSOLE_TABLES) {
+  console_print_table(
+  landmark_predictions %>% transmute(marker_label,landmark_month,comparison_group,adjusted_change=estimate,conf_low,conf_high,adjusted_change_95ci=estimate_ci,support_patients_hsg,support_patients_nonhsg,support_measurements_hsg,support_measurements_nonhsg)%>% arrange(landmark_month,comparison_group),
+  title = paste0("Landmark group-specific adjusted estimates: ", marker_label)
+  )
+  console_print_table(
+  landmark_contrasts %>% transmute(marker_label,landmark_month,contrast,mean_difference_hsg_minus_nonhsg=estimate,std_error,conf_low,conf_high,mean_difference_95ci=estimate_print,p_value,p_print,significant,unit,support_patients_hsg,support_patients_nonhsg,support_measurements_hsg,support_measurements_nonhsg,interpretation)%>% arrange(landmark_month),
+  title = paste0("Effect-size table: HSG minus non-HSG difference in longitudinal change - ", marker_label)
+  )
+}
+plot_y_values<-c(point_data$marker_change_from_baseline,prediction_curves$conf_low,prediction_curves$conf_high,landmark_predictions$conf_low,landmark_predictions$conf_high)
+plot_y_values<-plot_y_values[is.finite(plot_y_values)]
+if (length(plot_y_values) == 0) {
+  y_span_for_stars<-1
+} else {
+  y_span_for_stars<-diff(range(plot_y_values,na.rm=TRUE))
+  if (!is.finite(y_span_for_stars) || y_span_for_stars <= 0) {
+  y_span_for_stars<-max(abs(plot_y_values),na.rm=TRUE)
+  if (!is.finite(y_span_for_stars) || y_span_for_stars <= 0) {
+  y_span_for_stars<-1
+  }
+  }
+}
+if (nrow(landmark_predictions) > 0 && nrow(landmark_contrasts) > 0) {
+  significance_star_data<-landmark_predictions %>% group_by(landmark_month) %>% summarise(y_top=max(conf_high,na.rm=TRUE),.groups="drop")%>% left_join(landmark_contrasts %>% select(landmark_month,p_value,significant),by="landmark_month")%>% filter(significant) %>% mutate(x_star=landmark_month,y_star=y_top + SIGNIFICANCE_STAR_NUDGE_FRAC * y_span_for_stars,label=SIGNIFICANCE_STAR_LABEL)
+} else {
+  significance_star_data<-tibble::tibble()
+}
+marker_plot_title <- paste0(marker_plot_label, " change from baseline")
+y_axis_label<-paste0("Within-group \u0394\n(",change_unit_label,")")
+group_colours<-c("HSG"=COLOUR_HSG,"Non-HSG"=COLOUR_NONHSG)
+marker_plot<-ggplot() + geom_hline(yintercept=0,linewidth=FIG5_ZERO_LINE_WIDTH,colour=COLOUR_ZERO_LINE)+ geom_ribbon(
+  data=prediction_curves,
+aes(x=followup_months,ymin=conf_low,ymax=conf_high,fill=comparison_group),
+  alpha=RIBBON_ALPHA,
+  colour=NA,
+  show.legend=FALSE
+  ) + geom_point(data=point_data %>% filter(comparison_group=="HSG"),aes(x=followup_months,y=marker_change_from_baseline),colour=COLOUR_HSG,alpha=POINT_ALPHA_HSG,size=POINT_SIZE_HSG,shape=POINT_SHAPE_HSG,stroke=POINT_STROKE,position=position_jitter(width=POINT_JITTER_WIDTH_MONTHS,height=POINT_JITTER_HEIGHT,seed=20260506),show.legend=FALSE)+ geom_point(data=point_data %>% filter(comparison_group=="Non-HSG"),aes(x=followup_months,y=marker_change_from_baseline),colour=COLOUR_NONHSG,alpha=POINT_ALPHA_NONHSG,size=POINT_SIZE_NONHSG,shape=POINT_SHAPE_NONHSG,stroke=POINT_STROKE,position=position_jitter(width=POINT_JITTER_WIDTH_MONTHS,height=POINT_JITTER_HEIGHT,seed=20260506),show.legend=FALSE)
+if (SHOW_SPIDER_LINES && nrow(spider_line_data) > 0) {
+  marker_plot<-marker_plot + geom_line(data=spider_line_data,aes(x=followup_months,y=marker_change_from_baseline,group=patient,colour=comparison_group),inherit.aes=FALSE,linewidth=SPIDER_LINE_WIDTH,alpha=SPIDER_LINE_ALPHA,lineend="round",show.legend=FALSE)
+}
+if (SHOW_LANDMARK_DUMBBELL_CONNECTOR && nrow(landmark_connector_data) > 0) {
+  marker_plot<-marker_plot + geom_segment(data=landmark_connector_data,aes(x=x_hsg,xend=x_nonhsg,y=y_hsg,yend=y_nonhsg),inherit.aes=FALSE,colour=COLOUR_CONNECTOR,linewidth=LANDMARK_CONNECTOR_LINEWIDTH,alpha=LANDMARK_CONNECTOR_ALPHA,lineend="round",show.legend=FALSE)
+}
+if (nrow(landmark_predictions) > 0) {
+  marker_plot<-marker_plot + geom_errorbar(data=landmark_predictions,aes(x=x_plot,ymin=conf_low,ymax=conf_high,colour=comparison_group),inherit.aes=FALSE,width=LANDMARK_INTERVAL_CAP_WIDTH_MONTHS,linewidth=LANDMARK_INTERVAL_LINEWIDTH,alpha=0.96,show.legend=FALSE)+ geom_point(data=landmark_predictions %>% filter(comparison_group=="HSG"),aes(x=x_plot,y=estimate),inherit.aes=FALSE,colour=COLOUR_HSG,size=LANDMARK_POINT_SIZE,shape=LANDMARK_POINT_SHAPE_HSG,alpha=0.98,show.legend=FALSE)+ geom_point(data=landmark_predictions %>% filter(comparison_group=="Non-HSG"),aes(x=x_plot,y=estimate),inherit.aes=FALSE,colour=COLOUR_NONHSG,size=LANDMARK_POINT_SIZE,shape=LANDMARK_POINT_SHAPE_NONHSG,alpha=0.98,show.legend=FALSE)
+}
+if (nrow(significance_star_data) > 0) {
+  marker_plot<-marker_plot + geom_text(data=significance_star_data,aes(x=x_star,y=y_star,label=label),inherit.aes=FALSE,size=SIGNIFICANCE_STAR_SIZE,fontface="bold",colour="#111111",vjust=0,show.legend=FALSE)
+}
+marker_plot<-marker_plot + geom_line(data=prediction_curves,aes(x=followup_months,y=estimate,colour=comparison_group),linewidth=LINE_WIDTH_CURVE,show.legend=FALSE)+ scale_colour_manual(values=group_colours,drop=FALSE,guide="none")+ scale_fill_manual(values=group_colours,drop=FALSE,guide="none")+ scale_x_continuous(limits=c(0,max_followup_for_plot),breaks=make_marker_month_breaks(max_followup_for_plot),labels=label_every_6_months_marker,expand=expansion(mult=c(0.01,0.01)))+ labs(title=marker_plot_title,subtitle=NULL,x="Months since index test",y=y_axis_label)+ coord_cartesian(clip = "off") + theme_marker(base_size=BASE_FONT_SIZE) + theme(legend.position="none")
+if (SHOW_RISK_SET_TABLE) {
+  risk_set_plot<-make_risk_set_plot(
+  risk_table_data=number_at_risk_data,
+  max_followup_for_plot=max_followup_for_plot,
+  draw_text=TRUE
+  )
+  plot_to_save<-marker_plot / risk_set_plot + patchwork::plot_layout(
+  heights=c(1,RISK_TABLE_RELATIVE_HEIGHT)
+  )
+  save_height<-FIGURE_HEIGHT
+} else {
+  plot_to_save<-marker_plot
+  save_height<-FIGURE_HEIGHT
+}
+difference_plot_title <- paste0(marker_plot_label, ": between-group difference")
+difference_y_axis_label<-paste0("Between-group \u0394\n(",change_unit_label,")")
+difference_plot<-ggplot(difference_curve,aes(x=followup_months)) + geom_hline(yintercept=0,linewidth=FIG5_ZERO_LINE_WIDTH,colour=COLOUR_ZERO_LINE)+ geom_ribbon(
+aes(ymin=conf_low,ymax=conf_high),
+  fill=COLOUR_DIFFERENCE_RIBBON,
+  alpha=DIFFERENCE_RIBBON_ALPHA,
+  colour=NA
+  ) + geom_line(aes(y=estimate),colour=COLOUR_DIFFERENCE,linewidth=LINE_WIDTH_DIFFERENCE)+ scale_x_continuous(limits=c(0,max_followup_for_plot),breaks=make_marker_month_breaks(max_followup_for_plot),labels=label_every_6_months_marker,expand=expansion(mult=c(0.01,0.01)))+ labs(title=difference_plot_title,subtitle=NULL,x="Months since index test",y=difference_y_axis_label)+ coord_cartesian(clip = "off") + theme_difference(base_size=BASE_FONT_SIZE) + theme(legend.position="none")
+if (
+  isTRUE(ALIGN_DIFFERENCE_PLOTS_TO_TRAJECTORY_LAYOUT) &&
+  isTRUE(SHOW_RISK_SET_TABLE)
+) {
+  difference_alignment_spacer<-make_risk_set_plot(
+  risk_table_data=number_at_risk_data,
+  max_followup_for_plot=max_followup_for_plot,
+  draw_text=TRUE
+  )
+  difference_plot_to_save<-difference_plot / difference_alignment_spacer + patchwork::plot_layout(
+  heights=c(1,RISK_TABLE_RELATIVE_HEIGHT)
+  )
+} else {
+  difference_plot_to_save<-difference_plot
+}
+if (isTRUE(ALIGN_DIFFERENCE_PLOTS_TO_TRAJECTORY_LAYOUT)) {
+  aligned_plots<-cowplot::align_plots(
+  plot_to_save,
+  difference_plot_to_save,
+  align = "v",
+  axis = "lr"
+  )
+  plot_to_save<-aligned_plots[[1]]
+  difference_plot_to_save<-aligned_plots[[2]]
+}
+save_jpeg_plot(
+  plot_object=plot_to_save,
+  filename=main_figure_jpeg_path,
+  width=FIGURE_WIDTH,
+  height=save_height,
+  dpi=FIGURE_DPI
+)
+save_jpeg_plot(
+  plot_object=difference_plot_to_save,
+  filename=difference_figure_jpeg_path,
+  width=DIFFERENCE_FIGURE_WIDTH,
+  height=DIFFERENCE_FIGURE_HEIGHT,
+  dpi=FIGURE_DPI
+)
+tibble::tibble(marker_id=marker_id,marker_label=marker_label,source_column=source_column,status="OK",adjusted_for_baseline_marker_value=ADJUST_FOR_BASELINE_MARKER_VALUE,adjusted_for_baseline_calendar_time=ADJUST_FOR_BASELINE_CALENDAR_TIME,n_patients_model=n_patients_model,n_hsg_model=n_hsg_model,n_nonhsg_model=n_nonhsg_model,n_measurements_model=n_measurements_model,n_outlier_rows_excluded=n_outlier_rows_excluded,outlier_lower_bound=lower_bound,outlier_upper_bound=upper_bound,baseline_weighted_mean=weighted_baseline_value_mean,max_followup_months_observed=max_followup_months_observed,max_followup_months_plotted=max_followup_for_plot,time_model=time_basis_info$basis_attributes$model_type,n_spider_patients=dplyr::n_distinct(spider_line_data$patient),n_spider_rows=nrow(spider_line_data),risk_table_display_mode=RISK_TABLE_DISPLAY_MODE,main_figure_jpeg=main_figure_jpeg_path,difference_figure_jpeg=difference_figure_jpeg_path)
+}
+batch_status_list <- vector("list", length = nrow(marker_definitions))
+for (i in seq_len(nrow(marker_definitions))) {
+batch_status_list[[i]]<-run_one_marker(marker_definitions[i,])
+}
+batch_status<-bind_rows(batch_status_list)
+readr::write_csv(batch_status,file.path(TABLE_DIR,"batch_marker_analysis_status.csv"))
+group_summary_files<-list.files(
+TABLE_DIR,
+pattern = "^group_summary_.*\\.csv$",
+full.names=TRUE
+)
+if (length(group_summary_files) > 0) {
+all_group_summaries<-purrr::map_dfr(
+  group_summary_files,
+  function(path) {
+readr::read_csv(path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+  }
+)
+readr::write_csv(all_group_summaries,file.path(TABLE_DIR,"all_marker_group_summaries_combined.csv"))
+} else {
+all_group_summaries<-tibble::tibble()
+}
+risk_set_files<-list.files(
+TABLE_DIR,
+pattern = "^risk_set_.*\\.csv$",
+full.names=TRUE
+)
+if (length(risk_set_files) > 0) {
+all_risk_sets<-purrr::map_dfr(
+  risk_set_files,
+  function(path) {
+readr::read_csv(path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+  }
+)
+readr::write_csv(all_risk_sets,file.path(TABLE_DIR,"all_marker_risk_sets_combined.csv"))
+} else {
+all_risk_sets<-tibble::tibble()
+}
+landmark_effect_files<-list.files(
+TABLE_DIR,
+pattern = "^landmark_effect_sizes_.*\\.csv$",
+full.names=TRUE
+)
+if (length(landmark_effect_files) > 0) {
+all_landmark_effects<-purrr::map_dfr(
+  landmark_effect_files,
+  function(path) {
+readr::read_csv(path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+  }
+)
+readr::write_csv(all_landmark_effects,file.path(TABLE_DIR,"all_marker_landmark_effect_sizes_combined.csv"))
+} else {
+all_landmark_effects<-tibble::tibble()
+}
+landmark_prediction_files<-list.files(
+TABLE_DIR,
+pattern = "^landmark_predictions_.*\\.csv$",
+full.names=TRUE
+)
+if (length(landmark_prediction_files) > 0) {
+all_landmark_predictions<-purrr::map_dfr(
+  landmark_prediction_files,
+  function(path) {
+readr::read_csv(path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+  }
+)
+readr::write_csv(all_landmark_predictions,file.path(TABLE_DIR,"all_marker_landmark_predictions_combined.csv"))
+} else {
+all_landmark_predictions<-tibble::tibble()
+}
+difference_curve_files<-list.files(
+TABLE_DIR,
+pattern = "^difference_curve_.*\\.csv$",
+full.names=TRUE
+)
+if (length(difference_curve_files) > 0) {
+all_difference_curves<-purrr::map_dfr(
+  difference_curve_files,
+  function(path) {
+readr::read_csv(path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+  }
+)
+readr::write_csv(all_difference_curves,file.path(TABLE_DIR,"all_marker_difference_curves_combined.csv"))
+} else {
+all_difference_curves<-tibble::tibble()
+}
+summary_effect_files<-list.files(
+TABLE_DIR,
+pattern = "^summary_effects_.*\\.csv$",
+full.names=TRUE
+)
+if (length(summary_effect_files) > 0) {
+all_summary_effects<-purrr::map_dfr(
+  summary_effect_files,
+  function(path) {
+readr::read_csv(path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+  }
+)
+readr::write_csv(all_summary_effects,file.path(TABLE_DIR,"all_marker_summary_effects_combined.csv"))
+} else {
+all_summary_effects<-tibble::tibble()
+}
+trajectory_wald_test_files<-list.files(
+TABLE_DIR,
+pattern = "^trajectory_wald_tests_.*\\.csv$",
+full.names=TRUE
+)
+if (length(trajectory_wald_test_files) > 0) {
+all_trajectory_wald_tests<-purrr::map_dfr(
+  trajectory_wald_test_files,
+  function(path) {
+readr::read_csv(path,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+  }
+)
+readr::write_csv(all_trajectory_wald_tests,file.path(TABLE_DIR,"all_marker_trajectory_wald_tests_combined.csv"))
+} else {
+all_trajectory_wald_tests<-tibble::tibble()
+}
+if (PRINT_FINAL_COMBINED_CONSOLE_TABLES) {
+console_marker_status<-batch_status %>% transmute(marker_label,status,adjusted_for_baseline_marker_value,adjusted_for_baseline_calendar_time,hsg_patients=n_hsg_model,nonhsg_patients=n_nonhsg_model,total_patients=n_patients_model,total_measurements=n_measurements_model,outlier_rows_excluded=n_outlier_rows_excluded,outlier_lower_bound=round(outlier_lower_bound,3),outlier_upper_bound=round(outlier_upper_bound,3),baseline_weighted_mean=round(baseline_weighted_mean,3),max_followup_months_plotted=round(max_followup_months_plotted,1),time_model,n_spider_patients,risk_table_display_mode,main_figure_jpeg,difference_figure_jpeg)
+console_print_table(
+  console_marker_status,
+  title = "FINAL TABLE-READY OUTPUT: marker-level analysis status"
+)
+if (nrow(all_group_summaries) > 0) {
+  console_group_summary<-all_group_summaries %>% transmute(marker_label,comparison_group,patients,weighted_patients=round(weighted_patients,1),median_measurements_per_patient,q1_measurements_per_patient,q3_measurements_per_patient,mean_baseline_unweighted=round(mean_baseline_unweighted,3),mean_baseline_weighted=round(mean_baseline_weighted,3),median_baseline=round(median_baseline,3))%>% arrange(marker_label,comparison_group)
+  console_print_table(
+  console_group_summary,
+  title = "FINAL TABLE-READY OUTPUT: group-level baseline and measurement summary"
+  )
+}
+if (nrow(all_risk_sets) > 0) {
+  console_risk_set<-all_risk_sets %>% transmute(marker_label,risk_month,comparison_group,n_at_risk_patients,n_measurement_window_patients,n_measurement_window_rows,displayed_value=n_display)%>% arrange(marker_label,risk_month,comparison_group)
+  console_print_table(
+  console_risk_set,
+  title = "FINAL TABLE-READY OUTPUT: risk set"
+  )
+}
+if (nrow(all_landmark_effects) > 0) {
+  console_effect_sizes<-all_landmark_effects %>% filter(!is.na(landmark_month)) %>% transmute(marker_label,landmark_month,contrast,mean_difference_hsg_minus_nonhsg=estimate,std_error,conf_low,conf_high,mean_difference_95ci=estimate_print,p_value,p_print,significant,unit,support_patients_hsg,support_patients_nonhsg,support_measurements_hsg,support_measurements_nonhsg,interpretation)%>% arrange(marker_label,landmark_month)
+  console_print_table(
+  console_effect_sizes,
+  title = "FINAL TABLE-READY OUTPUT: landmark effect sizes for manuscript write-up"
+  )
+}
+if (nrow(all_difference_curves) > 0) {
+  console_difference_selected<-all_difference_curves %>% filter(followup_months %in% c(0,3,6,12,18,24,30))%>% transmute(marker_label,followup_months,contrast,mean_difference_hsg_minus_nonhsg=estimate,std_error,conf_low,conf_high,mean_difference_95ci=fmt_ci(estimate,conf_low,conf_high,digits=2),p_value,p_print=fmt_p(p_value,digits=3),unit,interpretation)%>% arrange(marker_label,followup_months)
+  console_print_table(
+  console_difference_selected,
+  title = "FINAL TABLE-READY OUTPUT: selected points from full difference curves"
+  )
+}
+}
+if (exists("all_summary_effects") && nrow(all_summary_effects) > 0) {
+console_summary_effects<-all_summary_effects %>% transmute(marker_label,estimand_type,averaging_method,horizon_start_month,horizon_end_month,horizon_duration_months,contrast,mean_difference_hsg_minus_nonhsg=estimate,std_error,conf_low,conf_high,mean_difference_95ci=estimate_print,p_value,p_print,significant,unit,n_averaging_rows,n_support_patients_hsg,n_support_patients_nonhsg,n_support_rows,interpretation)%>% arrange(marker_label,factor(estimand_type,levels=c("Uniform time-averaged difference","Post-baseline uniform time-averaged difference","Area under HSG-minus-non-HSG difference curve","Observed-time weighted average difference","Patient-balanced observed-time average difference","Constant-effect GEE sensitivity coefficient")),horizon_start_month,horizon_end_month)
+console_print_table(
+  console_summary_effects,
+  title = "FINAL TABLE-READY OUTPUT: overall / summary effect-size estimates"
+)
+}
+if (exists("all_trajectory_wald_tests") && nrow(all_trajectory_wald_tests) > 0) {
+console_trajectory_wald_tests<-all_trajectory_wald_tests %>% transmute(marker_label,test_label,n_terms,chisq,df,p_value,p_print,test_status,terms_tested)%>% arrange(marker_label,test_label)
+console_print_table(
+  console_trajectory_wald_tests,
+  title = "FINAL TABLE-READY OUTPUT: global trajectory Wald tests"
+)
+}
