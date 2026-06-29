@@ -1,0 +1,1164 @@
+rm(list=ls())
+if (file.exists(file.path(dirname(getwd()), "00_config.R"))) { source(file.path(dirname(getwd()), "00_config.R")) } else if (file.exists("00_config.R")) { source("00_config.R") }
+if (!exists("OUT_DIR")) OUT_DIR <- "E:/Briefcase/OneCare/HSG_manuscript/public_repro_outputs"
+PUBLIC_MODEL_ROOT <- file.path(dirname(OUT_DIR), "public_repro_model_outputs")
+dir.create(PUBLIC_MODEL_ROOT,recursive=TRUE,showWarnings=FALSE)
+options(stringsAsFactors=FALSE)
+options(scipen=999)
+DATA_PATH <- get("DATA_PATH", envir = .GlobalEnv)
+OUT_DIR <- file.path(PUBLIC_MODEL_ROOT, "Figure_4_IPTW_IRD_forest")
+dir.create(OUT_DIR,recursive=TRUE,showWarnings=FALSE)
+PLOT_DIR <- file.path(OUT_DIR, "plots")
+TABLE_DIR <- file.path(OUT_DIR, "tables")
+DIAGNOSTIC_DIR <- file.path(OUT_DIR, "diagnostics")
+dir.create(PLOT_DIR,recursive=TRUE,showWarnings=FALSE)
+dir.create(TABLE_DIR,recursive=TRUE,showWarnings=FALSE)
+dir.create(DIAGNOSTIC_DIR,recursive=TRUE,showWarnings=FALSE)
+STUDY_START_DATE <- as.Date("2023-01-01")
+HSG_START_DATE <- as.Date("2023-07-01")
+HSG_PRE_ENROLMENT_DATE <- as.Date("2023-05-01")
+STUDY_END_DATE <- as.Date("2025-12-31")
+APPLY_ANALYTIC_DATE_WINDOW<-FALSE
+ANALYTIC_START_DATE <- as.Date("2023-01-01")
+ANALYTIC_END_DATE <- as.Date("2024-03-31")
+APPLY_AGE_FILTER<-TRUE
+MINIMUM_AGE<-40
+KEEP_PATIENTS_WITH_MISSING_AGE<-FALSE
+APPLY_CITIZENSHIP_FILTER<-TRUE
+KEEP_PATIENTS_WITH_MISSING_CITIZENSHIP<-TRUE
+ALLOW_SAME_DAY_ENROLMENT_AND_DEENROLMENT<-TRUE
+USE_ANNUAL_HEALTH_PLAN_AS_ENROLMENT_EVIDENCE<-FALSE
+IGNORE_ENROLMENT_DATES_AFTER_STUDY_END<-TRUE
+IGNORE_DEENROLMENT_DATES_AFTER_STUDY_END<-TRUE
+CENSOR_AT_LAST_OBSERVED_ENCOUNTER<-FALSE
+MINIMUM_PERSON_TIME_DAYS<-1
+FIT_MIN_AGE<-50
+HPV_PAP_MIN_AGE<-40
+HPV_PAP_MAX_AGE<-69
+MAMMOGRAPHY_MIN_AGE<-50
+MAMMOGRAPHY_MAX_AGE<-69
+VACCINE_AGE_THRESHOLD<-65
+INFLUENZA_PNEUMOCOCCAL_VACCINATION_CODES<-c("A-INF","A-PCV","A-PCV20","A-PPSV","A-PNC")
+USE_BRGLM2_FOR_PROPENSITY_IF_AVAILABLE<-TRUE
+PROPENSITY_NS_AGE_DF<-4
+PROPENSITY_MIN_FACTOR_LEVEL_N<-25
+PROPENSITY_PS_LOWER_BOUND<-0.01
+PROPENSITY_PS_UPPER_BOUND<-0.99
+TRUNCATE_IPTW<-TRUE
+IPTW_LOWER_QUANTILE<-0.01
+IPTW_UPPER_QUANTILE<-0.99
+RENORMALIZE_FINAL_WEIGHTS_TO_MEAN_ONE<-TRUE
+OUTCOME_MODEL_INCLUDE_COVARIATES<-FALSE
+OUTCOME_MODEL_INCLUDE_CLINIC_FIXED_EFFECTS<-TRUE
+OUTCOME_MODEL_USE_CLUSTER_ROBUST_BY_CLINIC<-TRUE
+MIN_CLINICS_FOR_CLINIC_FIXED_EFFECT<-2
+MIN_CLINICS_FOR_CLUSTER_ROBUST_SE<-2
+APPLY_ZERO_EVENT_CONTINUITY_FOR_MODEL_FITTING<-TRUE
+ZERO_EVENT_CONTINUITY_TOTAL<-0.5
+MIN_PATIENTS_PER_ARM<-10
+MIN_PERSON_YEARS_PER_ARM<-0.25
+ROBUST_VCOV_TYPE <- "HC0"
+IRD_DISPLAY_SCALE<-1
+IRD_DISPLAY_AXIS_LABEL <- "IPTW-adjusted incidence rate difference\n(events per person-year)"
+FIGURE_WIDTH<-4.70
+FIGURE_HEIGHT<-5.25
+FIGURE_DPI<-450
+BASE_FONT_SIZE<-10.5
+TEXT_SIZE_MM<-BASE_FONT_SIZE / ggplot2::.pt
+POINT_SIZE<-3.2
+SEGMENT_LINEWIDTH<-0.65
+ZERO_LINEWIDTH<-0.45
+COLOUR_POINT <- "#000000"
+COLOUR_CI <- "#000000"
+COLOUR_ZERO <- "#777777"
+COLOUR_NONESTIMABLE <- "#666666"
+SAVE_PDF<-TRUE
+SAVE_JPEG<-TRUE
+SAVE_PNG<-FALSE
+X_AXIS_N_BREAKS<-3
+X_AXIS_ROUNDING_UNIT<-0.1
+X_AXIS_LABEL_DIGITS<-2
+required_packages<-c("readr","dplyr","tidyr","stringr","lubridate","janitor","ggplot2","scales","forcats","purrr","splines","sandwich","broom","grid","ggtext")
+optional_packages<-c("brglm2","ragg")
+for (pkg in required_packages) {
+if (!requireNamespace(pkg,quietly=TRUE)) {
+  install.packages(pkg,dependencies=TRUE)
+}
+}
+for (pkg in optional_packages) {
+if (!requireNamespace(pkg,quietly=TRUE)) {
+  try(install.packages(pkg,dependencies=TRUE),silent=TRUE)
+}
+}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(janitor)
+library(ggplot2)
+library(scales)
+library(forcats)
+library(purrr)
+library(splines)
+library(sandwich)
+library(broom)
+library(grid)
+library(ggtext)
+has_ragg <- requireNamespace("ragg", quietly = TRUE)
+has_brglm2 <- requireNamespace("brglm2", quietly = TRUE)
+parse_mixed_date<-function(x) {
+if (inherits(x, "Date")) {
+  return(x)
+}
+if (inherits(x, "POSIXct") || inherits(x, "POSIXlt")) {
+  return(as.Date(x))
+}
+if (is.numeric(x)) {
+  out<-rep(as.Date(NA),length(x))
+  valid_excel<-!is.na(x) & x > 20000 & x < 70000
+  out[valid_excel] <- as.Date(x[valid_excel], origin = "1899-12-30")
+  return(out)
+}
+x_chr<-as.character(x)
+x_chr<-stringr::str_squish(x_chr)
+x_chr[
+  is.na(x_chr) |
+  x_chr == "" |
+stringr::str_to_upper(x_chr)%in% c("NA","N/A","NULL","NONE","NIL","NAN","UNKNOWN","MISSING","NOT AVAILABLE","NOT APPLICABLE")
+]<-NA_character_
+parsed<-suppressWarnings(
+  lubridate::parse_date_time(
+  x_chr,
+orders=c("ymd HMS","ymd HM","ymd","dmy HMS","dmy HM","dmy","mdy HMS","mdy HM","mdy","d b Y","d B Y","d b y","d B y","d-b-Y","d-B-Y","d-b-y","d-B-y","b d Y","B d Y","b d y","B d y","m/d/Y","m/d/y","d/m/Y","d/m/y","Y/m/d","Y-m-d"),
+  tz = "UTC",
+  quiet=TRUE
+  )
+)
+out<-as.Date(parsed)
+numeric_x<-suppressWarnings(as.numeric(x_chr))
+excel_idx<-is.na(out) & !is.na(numeric_x) & numeric_x > 20000 & numeric_x < 70000
+if (any(excel_idx,na.rm=TRUE)) {
+  out[excel_idx] <- as.Date(numeric_x[excel_idx], origin = "1899-12-30")
+}
+out
+}
+is_present<-function(x) {
+if (inherits(x, "Date")) {
+  return(!is.na(x))
+}
+if (inherits(x, "POSIXct") || inherits(x, "POSIXlt")) {
+  return(!is.na(x))
+}
+x_chr<-as.character(x)
+x_chr<-stringr::str_squish(x_chr)
+x_upper<-stringr::str_to_upper(x_chr)
+!is.na(x_chr) &
+  x_chr != "" &
+!(x_upper %in% c("NA","N/A","NULL","NONE","NIL","NAN","UNKNOWN","MISSING","NOT AVAILABLE","NOT APPLICABLE"))
+}
+to_numeric_clean<-function(x) {
+if (is.numeric(x)) {
+  return(x)
+}
+suppressWarnings(readr::parse_number(as.character(x)))
+}
+safe_min_date<-function(x) {
+x<-as.Date(x)
+x<-x[!is.na(x)]
+if (length(x) == 0) {
+  return(as.Date(NA))
+}
+min(x)
+}
+safe_max_date<-function(x) {
+x<-as.Date(x)
+x<-x[!is.na(x)]
+if (length(x) == 0) {
+  return(as.Date(NA))
+}
+max(x)
+}
+first_present_value<-function(x) {
+keep<-is_present(x)
+if (!any(keep,na.rm=TRUE)) {
+  return(NA_character_)
+}
+as.character(x[keep][1])
+}
+mode_present_value<-function(x) {
+keep<-is_present(x)
+if (!any(keep,na.rm=TRUE)) {
+  return(NA_character_)
+}
+x_chr<-as.character(x[keep])
+tab<-sort(table(x_chr),decreasing=TRUE)
+names(tab)[1]
+}
+to_yes_no_bool<-function(x) {
+if (is.logical(x)) {
+  return(!is.na(x) & x)
+}
+if (is.numeric(x)) {
+  return(!is.na(x) & x != 0)
+}
+x_chr<-stringr::str_to_lower(stringr::str_squish(as.character(x)))
+x_chr[is.na(x_chr)] <- ""
+negative<-stringr::str_detect(
+  x_chr,
+  "^(0|no|false|n|nil|none|not done|not completed|incomplete|negative|absent)$"
+)
+positive<-stringr::str_detect(
+  x_chr,
+  "^(1|yes|true|y|done|completed|complete|positive|present|recorded)$"
+)
+positive & !negative
+}
+to_enrolled_bool<-function(x) {
+x_chr<-stringr::str_to_lower(stringr::str_squish(as.character(x)))
+x_chr[is.na(x_chr)] <- ""
+negative<-stringr::str_detect(
+  x_chr,
+paste0("not enrolled|not enroled|not enrol|not enroll|","non-enrolled|non enrolled|unenrolled|un-enrolled|","de-enrolled|de enrolled|de-enroled|de enroled|","de-enrol|de enrol|de-enroll|de enroll|","withdraw|withdrawn|terminated|ceased")
+)
+positive<-stringr::str_detect(
+  x_chr,
+  "enrolled|enroled|enrol|enroll"
+)
+positive & !negative
+}
+to_deenrolled_bool<-function(x) {
+x_chr<-stringr::str_to_lower(stringr::str_squish(as.character(x)))
+x_chr[is.na(x_chr)] <- ""
+stringr::str_detect(
+  x_chr,
+paste0("de-enrolled|de enrolled|de-enroled|de enroled|","de-enrol|de enrol|de-enroll|de enroll|","withdraw|withdrawn|terminated|ceased")
+)
+}
+to_condition_bool_empty_means_absent<-function(x) {
+if (is.logical(x)) {
+  return(!is.na(x) & x)
+}
+if (is.numeric(x)) {
+  return(!is.na(x) & x != 0)
+}
+x_chr<-stringr::str_to_lower(stringr::str_squish(as.character(x)))
+x_chr[is.na(x_chr)] <- ""
+negative<-x_chr %in% c("","na","n/a","unknown","missing","none","nil","no","0","false","negative","absent","not present","not recorded","not diagnosed")
+positive<-stringr::str_detect(
+  x_chr,
+  "^(1|yes|true|y|present|positive|diagnosed|known|recorded)$"
+) |
+  (!negative)
+positive & !negative
+}
+row_any_present<-function(data,candidate_columns) {
+present_columns<-intersect(candidate_columns,names(data))
+if (length(present_columns) == 0) {
+  return(rep(FALSE,nrow(data)))
+}
+present_matrix<-vapply(
+  present_columns,
+  function(column_name) {
+  is_present(data[[column_name]])
+  },
+  logical(nrow(data))
+)
+if (is.null(dim(present_matrix))) {
+  present_matrix<-matrix(present_matrix,ncol=1)
+}
+rowSums(present_matrix,na.rm=TRUE) > 0
+}
+row_any_enrolled_status<-function(data,candidate_columns) {
+present_columns<-intersect(candidate_columns,names(data))
+if (length(present_columns) == 0) {
+  return(rep(FALSE,nrow(data)))
+}
+status_matrix<-vapply(
+  present_columns,
+  function(column_name) {
+  to_enrolled_bool(data[[column_name]])
+  },
+  logical(nrow(data))
+)
+if (is.null(dim(status_matrix))) {
+  status_matrix<-matrix(status_matrix,ncol=1)
+}
+rowSums(status_matrix,na.rm=TRUE) > 0
+}
+row_any_deenrolled_status<-function(data,candidate_columns) {
+present_columns<-intersect(candidate_columns,names(data))
+if (length(present_columns) == 0) {
+  return(rep(FALSE,nrow(data)))
+}
+status_matrix<-vapply(
+  present_columns,
+  function(column_name) {
+  to_deenrolled_bool(data[[column_name]])
+  },
+  logical(nrow(data))
+)
+if (is.null(dim(status_matrix))) {
+  status_matrix<-matrix(status_matrix,ncol=1)
+}
+rowSums(status_matrix,na.rm=TRUE) > 0
+}
+escape_regex<-function(x) {
+stringr::str_replace_all(
+  x,
+  "([.|()\\^{}+$*?\\[\\]\\\\])",
+  "\\\\\\1"
+)
+}
+row_any_vaccination_code<-function(data,candidate_columns,included_codes) {
+present_columns<-intersect(candidate_columns,names(data))
+if (length(present_columns) == 0) {
+  return(rep(FALSE,nrow(data)))
+}
+included_codes<-unique(stringr::str_to_upper(stringr::str_squish(included_codes)))
+included_codes <- included_codes[!is.na(included_codes) & included_codes != ""]
+included_codes<-included_codes[order(nchar(included_codes),decreasing=TRUE)]
+included_codes_escaped<-escape_regex(included_codes)
+code_pattern<-paste0("(^|[^A-Z0-9])(",paste(included_codes_escaped,collapse="|"),")([^A-Z0-9]|$)")
+code_matrix<-vapply(
+  present_columns,
+  function(column_name) {
+  x_chr<-stringr::str_to_upper(stringr::str_squish(as.character(data[[column_name]])))
+  x_chr[is.na(x_chr)] <- ""
+  stringr::str_detect(x_chr,code_pattern)
+  },
+  logical(nrow(data))
+)
+if (is.null(dim(code_matrix))) {
+  code_matrix<-matrix(code_matrix,ncol=1)
+}
+rowSums(code_matrix,na.rm=TRUE) > 0
+}
+row_any_pattern<-function(data,candidate_columns,pattern) {
+present_columns<-intersect(candidate_columns,names(data))
+if (length(present_columns) == 0) {
+  return(rep(FALSE,nrow(data)))
+}
+pattern_matrix<-vapply(
+  present_columns,
+  function(column_name) {
+  x_chr<-stringr::str_to_lower(stringr::str_squish(as.character(data[[column_name]])))
+  x_chr[is.na(x_chr)] <- ""
+  stringr::str_detect(x_chr,pattern)
+  },
+  logical(nrow(data))
+)
+if (is.null(dim(pattern_matrix))) {
+  pattern_matrix<-matrix(pattern_matrix,ncol=1)
+}
+rowSums(pattern_matrix,na.rm=TRUE) > 0
+}
+eligible_citizenship<-function(x,keep_missing=TRUE) {
+x_chr<-as.character(x)
+x_chr<-stringr::str_squish(x_chr)
+x_upper<-stringr::str_to_upper(x_chr)
+missing_value<-!is_present(x_chr)
+ineligible_foreign<-stringr::str_detect(
+  x_upper,
+paste0("FOREIGN|FOREIGNER|WORK PASS|WORKPASS|WORK PERMIT|","EMPLOYMENT PASS|\\bE PASS\\b|\\bEP\\b|S PASS|SPASS|","DEPENDANT PASS|DEPENDENT PASS|LONG.?TERM VISIT PASS|LTVP")
+)
+eligible_local<-stringr::str_detect(
+  x_upper,
+paste0("SINGAPOREAN|SINGAPORE CITIZEN|CITIZEN|","SINGAPORE PR|SINGAPORE PERMANENT RESIDENT|","PERMANENT RESIDENT|\\bPR\\b")
+)
+eligible_local | (!ineligible_foreign & !missing_value) | (keep_missing & missing_value)
+}
+clean_gender_group<-function(x) {
+x<-stringr::str_to_upper(stringr::str_squish(as.character(x)))
+dplyr::case_when(stringr::str_detect(x,"^F$|FEMALE|WOMAN")~ "Female",stringr::str_detect(x,"^M$|^MALE$|MAN")~ "Male",TRUE ~ "Unknown")
+}
+clean_citizenship_group<-function(x) {
+x<-stringr::str_to_upper(stringr::str_squish(as.character(x)))
+dplyr::case_when(stringr::str_detect(x,"PERMANENT RESIDENT|\\bPR\\b")~ "Permanent resident",stringr::str_detect(x,"CITIZEN|SINGAPOREAN")~ "SG Citizen",TRUE ~ "Unknown")
+}
+clean_ethnicity_group<-function(x) {
+x<-stringr::str_to_upper(stringr::str_squish(as.character(x)))
+dplyr::case_when(stringr::str_detect(x,"CHINESE")~ "Chinese",stringr::str_detect(x,"MALAY")~ "Malay",stringr::str_detect(x,"INDIAN")~ "Indian",x=="" | is.na(x)| x=="UNKNOWN" ~ "Unknown",TRUE ~ "Other")
+}
+clean_chas_group<-function(x) {
+x<-stringr::str_to_upper(stringr::str_squish(as.character(x)))
+dplyr::case_when(stringr::str_detect(x,"BLUE")~ "CHAS Blue",stringr::str_detect(x,"ORANGE")~ "CHAS Orange",stringr::str_detect(x,"GREEN")~ "CHAS Green",x %in% c("NONE","NO CHAS","NOT APPLICABLE","NOT ELIGIBLE")~ "No/Other CHAS",x=="" | is.na(x)| x=="UNKNOWN" ~ "Unknown",TRUE ~ "No/Other CHAS")
+}
+clean_smoking_group<-function(x) {
+x<-stringr::str_to_upper(stringr::str_squish(as.character(x)))
+dplyr::case_when(stringr::str_detect(x,"CURRENT")~ "Current smoker",stringr::str_detect(x,"EX")~ "Ex-smoker",stringr::str_detect(x,"FORMER")~ "Ex-smoker",stringr::str_detect(x,"NEVER")~ "Never smoker",x=="" | is.na(x)| x=="UNKNOWN" ~ "Unknown",TRUE ~ "Unknown")
+}
+collapse_rare_factor <- function(x, min_n = 25, other_label = "Other/rare") {
+x_chr<-as.character(x)
+x_chr<-stringr::str_squish(x_chr)
+x_chr[is.na(x_chr) | x_chr == ""] <- "Unknown"
+tab <- table(x_chr, useNA = "no")
+common_levels<-names(tab)[tab >= min_n]
+out<-ifelse(x_chr %in% common_levels,x_chr,other_label)
+factor(out)
+}
+fmt_n<-function(x) {
+if (length(x) == 0 || is.na(x)) {
+  return("NA")
+}
+scales::comma(as.numeric(x),accuracy=1)
+}
+fmt_sig3<-function(x) {
+out<-rep(NA_character_,length(x))
+keep<-!is.na(x) & is.finite(x)
+out[keep]<-vapply(
+  x[keep],
+  FUN=function(val) {
+  if (val == 0) {
+  return("0")
+  }
+  val_sig<-signif(val,3)
+  val_cap<-round(val_sig,3)
+  formatted<-formatC(
+  val_cap,
+  format = "f",
+  digits=3
+  )
+  formatted <- sub("0+$", "", formatted)
+  formatted <- sub("\\.$", "", formatted)
+  formatted
+  },
+  FUN.VALUE=character(1)
+)
+out
+}
+make_slug<-function(x) {
+x<-stringr::str_to_lower(x)
+x <- stringr::str_replace_all(x, "[^a-z0-9]+", "_")
+x <- stringr::str_replace_all(x, "^_+|_+$", "")
+x
+}
+weighted_mean<-function(x,w) {
+keep<-!is.na(x) & !is.na(w) & is.finite(w) & w > 0
+if (!any(keep)) {
+  return(NA_real_)
+}
+sum(w[keep] * x[keep]) / sum(w[keep])
+}
+weighted_var<-function(x,w) {
+keep<-!is.na(x) & !is.na(w) & is.finite(w) & w > 0
+if (sum(keep) < 2) {
+  return(NA_real_)
+}
+m<-weighted_mean(x[keep],w[keep])
+sum(w[keep] * (x[keep] - m)^2) / sum(w[keep])
+}
+smd_numeric<-function(x,treat,w=NULL) {
+treat<-as.integer(treat)
+if (is.null(w)) {
+  w<-rep(1,length(x))
+}
+x<-as.numeric(x)
+m1<-weighted_mean(x[treat == 1],w[treat == 1])
+m0<-weighted_mean(x[treat == 0],w[treat == 0])
+v1<-weighted_var(x[treat == 1],w[treat == 1])
+v0<-weighted_var(x[treat == 0],w[treat == 0])
+denom<-sqrt((v1 + v0) / 2)
+if (is.na(denom) || denom <= 0) {
+  return(NA_real_)
+}
+(m1 - m0) / denom
+}
+if (!file.exists(DATA_PATH)) {
+stop("DATA_PATH does not exist: ", DATA_PATH)
+}
+raw_data<-readr::read_csv(DATA_PATH,col_types=readr::cols(.default=readr::col_character()),guess_max=500000,show_col_types=FALSE,na=c("","NA","N/A","NULL","NaN","nan"))
+data_clean<-raw_data %>% janitor::clean_names()
+if (!"patient" %in% names(data_clean)) {
+stop("A patient identifier column named 'patient' is required after janitor::clean_names().")
+}
+if (!"encounter_date" %in% names(data_clean)) {
+stop("A column named 'encounter_date' is required after janitor::clean_names().")
+}
+if (!"enrolment_date" %in% names(data_clean) && "enrollment_date" %in% names(data_clean)) {
+data_clean<-data_clean %>% mutate(enrolment_date=enrollment_date)
+}
+if (!"de_enrolment_date" %in% names(data_clean) && "de_enrollment_date" %in% names(data_clean)) {
+data_clean<-data_clean %>% mutate(de_enrolment_date=de_enrollment_date)
+}
+required_optional_columns<-c("clinic","encounter_kind","enrolment_date","de_enrolment_date","annual_health_plan","c_year_of_birth","citizenship_status","gender","ethnicity","patient_chas_type","smoker")
+for (col in required_optional_columns) {
+if (!col %in% names(data_clean)) {
+  data_clean[[col]]<-NA_character_
+}
+}
+date_like_columns<-names(data_clean)[
+stringr::str_detect(names(data_clean), "date") |
+  names(data_clean) %in% c("encounter_date", "enrolment_date", "de_enrolment_date")
+]
+for (column_name in date_like_columns) {
+data_clean[[column_name]]<-parse_mixed_date(data_clean[[column_name]])
+}
+data_clean<-data_clean %>% mutate(patient=as.character(patient),clinic=as.character(clinic),c_year_of_birth_numeric=to_numeric_clean(c_year_of_birth),encounter_month=lubridate::floor_date(encounter_date,unit="month"))
+data_dated<-data_clean %>% filter(!is.na(encounter_date))
+data_study<-data_dated %>% filter(encounter_date >=STUDY_START_DATE,encounter_date <=STUDY_END_DATE)
+if (APPLY_ANALYTIC_DATE_WINDOW) {
+data_window<-data_study %>% filter(encounter_date >=ANALYTIC_START_DATE,encounter_date <=ANALYTIC_END_DATE)
+} else {
+data_window<-data_study
+}
+if (nrow(data_window) == 0) {
+stop("No rows remain after date filtering.")
+}
+all_status_columns<-names(data_window)[
+stringr::str_detect(names(data_window), "enrolment_status") |
+  stringr::str_detect(names(data_window), "enrollment_status")
+]
+static_status_columns<-all_status_columns[
+stringr::str_detect(all_status_columns, "as_of|asof|31_dec|31dec")
+]
+timevarying_status_columns<-setdiff(all_status_columns,static_status_columns)
+general_screening_columns<-c("screening_screening_type","screening_test_order","screening_follow_up_outcome")
+screening_type_columns<-c("screening_screening_type")
+dfs_columns<-c("clinical_indicators_dfs","clinical_indicators_dfs_service_provider","clinical_indicators_dfs_outcome")
+drp_columns<-c("clinical_indicators_drp","clinical_indicators_drp_service_provider","clinical_indicators_drp_result","clinical_indicators_drp_followup","clinical_indicators_drp_other_findings")
+vaccination_columns<-c("vaccination_vaccine_type","vaccination_product_name","vaccination_sdd","vaccination_covid_vaccination_dose_type","vaccination_covid_vaccination_conditions")
+bmi_bp_smoking_columns<-c("visits_bmi_height","visits_bmi_weight","visits_bmi_weight_not_feasible","visits_bmi_waist_circumference","visits_bmi_bmi","visits_bmi_systolic_bp","visits_bmi_diastolic_bp","visits_bmi_smoking_assessment")
+bp_assessment_columns<-c("visits_bmi_systolic_bp","visits_bmi_diastolic_bp")
+hba1c_columns<-c("clinical_indicators_hb_a1c")
+renal_monitoring_columns<-c("clinical_indicators_serum_creatinine","clinical_indicators_e_gfr","clinical_indicators_u_acr","clinical_indicators_u_pcr")
+lipid_monitoring_columns<-c("clinical_indicators_ldl_c","clinical_indicators_hdl_c","clinical_indicators_triglycerides","clinical_indicators_total_cholesterol")
+respiratory_assessment_columns<-c("clinical_indicators_spirometry_date_done","clinical_indicators_asthma_control_test_act","clinical_indicators_gina_assessment_of_symptom_control")
+chronic_condition_columns<-c("diabetes","pre_diabetes","hypertension","lipid_disorder","asthma","copd","nephritis_nephrosis","chronic_kidney_disease","ckd","ischaemic_heart_disease","ischemic_heart_disease","ihd","stroke","dementia","osteoarthritis","parkinsons_disease","benign_prostatic_hyperplasia","epilepsy","osteoporosis","psoriasis","rheumatoid_arthritis","schizophrenia","major_depression","bipolar_disorder","anxiety","allergic_rhinitis","gout","chronic_hepatitis_b")
+all_service_columns<-unique(c(general_screening_columns,screening_type_columns,dfs_columns,drp_columns,vaccination_columns,bmi_bp_smoking_columns,bp_assessment_columns,hba1c_columns,renal_monitoring_columns,lipid_monitoring_columns,respiratory_assessment_columns))
+for (col in unique(c(chronic_condition_columns,all_service_columns))) {
+if (!col %in% names(data_window)) {
+  data_window[[col]]<-NA_character_
+}
+}
+CVRF_SCREENING_PATTERN<-paste0("hba1c|hb\\s*a1c|a1c|","fpg|fasting\\s*plasma\\s*glucose|fasting\\s*glucose|","lipid|lipids|lipid\\s*panel|cholesterol|ldl|hdl|triglyceride|","cardiovascular|cvd|cvrf")
+data_window<-data_window %>% mutate(encounter_kind_clean=stringr::str_to_lower(stringr::str_squish(as.character(encounter_kind))),encounter_kind_clean=ifelse(is.na(encounter_kind_clean),"",encounter_kind_clean),enrolment_date_for_study=dplyr::case_when(is.na(enrolment_date)~ as.Date(NA),IGNORE_ENROLMENT_DATES_AFTER_STUDY_END & enrolment_date > STUDY_END_DATE ~ as.Date(NA),TRUE ~ enrolment_date),de_enrolment_date_for_study=dplyr::case_when(is.na(de_enrolment_date)~ as.Date(NA),IGNORE_DEENROLMENT_DATES_AFTER_STUDY_END & de_enrolment_date > STUDY_END_DATE ~ as.Date(NA),TRUE ~ de_enrolment_date),row_kind_deenrolment=stringr::str_detect(encounter_kind_clean,"de.?enrol|de.?enroll|withdraw|withdrawn|terminated|ceased"),row_kind_enrolment=stringr::str_detect(encounter_kind_clean,"enrol|enroll")& !row_kind_deenrolment,row_enrolled_status=row_any_enrolled_status(.,timevarying_status_columns),row_deenrolled_status=row_any_deenrolled_status(.,timevarying_status_columns),row_annual_health_plan=to_yes_no_bool(annual_health_plan),row_any_bmi_bp_smoking=row_any_present(.,bmi_bp_smoking_columns),row_any_bp_assessment=row_any_present(.,bp_assessment_columns),row_any_general_screening=row_any_present(.,general_screening_columns),row_cvrf_screening=row_any_pattern(data=.,candidate_columns=screening_type_columns,pattern=CVRF_SCREENING_PATTERN),row_screening_hpv_pap=row_any_pattern(data=.,candidate_columns=screening_type_columns,pattern="hpv|pap|cervical"),row_screening_mammography=row_any_pattern(data=.,candidate_columns=screening_type_columns,pattern="mmg|mammogram|mammography|breast"),row_screening_fit=row_any_pattern(data=.,candidate_columns=screening_type_columns,pattern="fit|faecal|fecal|occult|colorectal"),row_any_hba1c=row_any_present(.,hba1c_columns),row_any_dfs=row_any_present(.,dfs_columns),row_any_drp=row_any_present(.,drp_columns),row_any_renal_monitoring=row_any_present(.,renal_monitoring_columns),row_any_lipid_monitoring=row_any_present(.,lipid_monitoring_columns),row_any_respiratory_assessment=row_any_present(.,respiratory_assessment_columns),row_influenza_pneumococcal_vaccination=row_any_vaccination_code(data=.,candidate_columns=vaccination_columns,included_codes=INFLUENZA_PNEUMOCOCCAL_VACCINATION_CODES))
+for (cc in chronic_condition_columns) {
+flag_col <- paste0("row_", cc, "_flag")
+data_window[[flag_col]]<-to_condition_bool_empty_means_absent(data_window[[cc]])
+}
+row_chronic_flag_columns <- paste0("row_", chronic_condition_columns, "_flag")
+patient_level_all<-data_window %>% group_by(patient) %>% summarise(clinic=mode_present_value(clinic),first_encounter_date=safe_min_date(encounter_date),last_encounter_date=safe_max_date(encounter_date),n_encounter_rows=n(),n_unique_encounter_dates=dplyr::n_distinct(encounter_date[!is.na(encounter_date)]),raw_first_enrolment_date_from_field=safe_min_date(enrolment_date_for_study),raw_first_enrolment_date_from_status=safe_min_date(encounter_date[row_enrolled_status]),raw_first_enrolment_date_from_kind=safe_min_date(encounter_date[row_kind_enrolment]),raw_first_enrolment_date_from_ahp=safe_min_date(encounter_date[row_annual_health_plan]),first_deenrolment_date_from_field=safe_min_date(de_enrolment_date_for_study),first_deenrolment_date_from_status=safe_min_date(encounter_date[row_deenrolled_status]),first_deenrolment_date_from_kind=safe_min_date(encounter_date[row_kind_deenrolment]),c_year_of_birth_numeric=suppressWarnings(as.numeric(first_present_value(c_year_of_birth_numeric))),citizenship_status=mode_present_value(citizenship_status),gender=mode_present_value(gender),ethnicity=mode_present_value(ethnicity),patient_chas_type=mode_present_value(patient_chas_type),smoker=mode_present_value(smoker),pre_hsg_unique_encounter_dates=dplyr::n_distinct(encounter_date[!is.na(encounter_date)& encounter_date < HSG_START_DATE]),pre_hsg_encounter_rows=sum(!is.na(encounter_date)& encounter_date < HSG_START_DATE),pre_hsg_any_bmi_bp_smoking=any(row_any_bmi_bp_smoking & encounter_date < HSG_START_DATE,na.rm=TRUE),pre_hsg_any_screening=any(row_any_general_screening & encounter_date < HSG_START_DATE,na.rm=TRUE),pre_hsg_any_lab_proxy=any((row_any_hba1c | row_any_renal_monitoring | row_any_lipid_monitoring)& encounter_date < HSG_START_DATE,na.rm=TRUE),across(all_of(row_chronic_flag_columns),~ any(.x,na.rm=TRUE)),.groups="drop")
+names(patient_level_all)<-stringr::str_replace(
+names(patient_level_all),
+"^row_",
+"patient_"
+)
+patient_level_all<-patient_level_all %>% rowwise() %>% mutate(
+  raw_first_enrolment_event_date=safe_min_date(
+  c(
+  raw_first_enrolment_date_from_field,
+  raw_first_enrolment_date_from_status,
+  raw_first_enrolment_date_from_kind,
+  if (USE_ANNUAL_HEALTH_PLAN_AS_ENROLMENT_EVIDENCE) {
+  raw_first_enrolment_date_from_ahp
+  } else {
+  as.Date(NA)
+  }
+  )
+  ),
+  first_deenrolment_event_date=safe_min_date(
+c(first_deenrolment_date_from_field,first_deenrolment_date_from_status,first_deenrolment_date_from_kind)
+  )
+) %>% ungroup() %>% mutate(hsg_pre_enrolment_needed=!is.na(raw_first_enrolment_event_date)& raw_first_enrolment_event_date < HSG_START_DATE & !is.na(first_encounter_date)& first_encounter_date < HSG_START_DATE,first_hsg_pre_enrolment_event_date=dplyr::case_when(hsg_pre_enrolment_needed ~ HSG_PRE_ENROLMENT_DATE,TRUE ~ as.Date(NA)),first_hsg_enrolment_event_date=dplyr::case_when(!is.na(raw_first_enrolment_event_date)& raw_first_enrolment_event_date >=HSG_START_DATE ~ raw_first_enrolment_event_date,!is.na(raw_first_enrolment_event_date)& raw_first_enrolment_event_date < HSG_START_DATE & !is.na(first_encounter_date)& first_encounter_date >=HSG_START_DATE ~ first_encounter_date,TRUE ~ as.Date(NA)))%>% rowwise() %>% mutate(first_valid_enrolment_reference_date=safe_min_date(c(first_hsg_pre_enrolment_event_date,first_hsg_enrolment_event_date)))%>% ungroup() %>% mutate(hsg_enrolled=!is.na(first_valid_enrolment_reference_date),hsg_deenrolled=!is.na(first_deenrolment_event_date),age_reference_date=dplyr::case_when(!is.na(first_encounter_date)& first_encounter_date < HSG_START_DATE ~ HSG_START_DATE,!is.na(first_encounter_date)& first_encounter_date >=HSG_START_DATE ~ first_encounter_date,TRUE ~ HSG_START_DATE),age_at_reference=dplyr::if_else(!is.na(c_year_of_birth_numeric),lubridate::year(age_reference_date)- c_year_of_birth_numeric,NA_real_),age_eligible=dplyr::case_when(is.na(age_at_reference)& KEEP_PATIENTS_WITH_MISSING_AGE ~ TRUE,is.na(age_at_reference)& !KEEP_PATIENTS_WITH_MISSING_AGE ~ FALSE,age_at_reference >=MINIMUM_AGE ~ TRUE,TRUE ~ FALSE),citizenship_eligible=eligible_citizenship(citizenship_status,keep_missing=KEEP_PATIENTS_WITH_MISSING_CITIZENSHIP),citizenship_eligible=ifelse(APPLY_CITIZENSHIP_FILTER,citizenship_eligible,TRUE),valid_deenrolment_sequence=dplyr::case_when(!hsg_deenrolled ~ TRUE,hsg_deenrolled & !hsg_enrolled ~ FALSE,hsg_deenrolled & hsg_enrolled & ALLOW_SAME_DAY_ENROLMENT_AND_DEENROLMENT & first_valid_enrolment_reference_date <=first_deenrolment_event_date ~ TRUE,hsg_deenrolled & hsg_enrolled & !ALLOW_SAME_DAY_ENROLMENT_AND_DEENROLMENT & first_valid_enrolment_reference_date < first_deenrolment_event_date ~ TRUE,TRUE ~ FALSE))
+patient_chronic_flag_columns<-names(patient_level_all)[
+stringr::str_detect(names(patient_level_all), "^patient_") &
+  stringr::str_detect(names(patient_level_all), "_flag$")
+]
+patient_level_main<-patient_level_all %>% filter(!is.na(first_encounter_date)) %>% filter(if (APPLY_AGE_FILTER) age_eligible else TRUE) %>% filter(citizenship_eligible) %>% filter(valid_deenrolment_sequence) %>% mutate(population_short=dplyr::case_when(!is.na(first_encounter_date)& first_encounter_date < HSG_START_DATE & hsg_enrolled & !hsg_deenrolled ~ "Ia",!is.na(first_encounter_date)& first_encounter_date < HSG_START_DATE & hsg_enrolled & hsg_deenrolled ~ "Ib",!is.na(first_encounter_date)& first_encounter_date < HSG_START_DATE & !hsg_enrolled ~ "II",!is.na(first_encounter_date)& first_encounter_date >=HSG_START_DATE & hsg_enrolled ~ "III",!is.na(first_encounter_date)& first_encounter_date >=HSG_START_DATE & !hsg_enrolled ~ "IV",TRUE ~ "Unclassified"))%>% filter(population_short %in% c("Ia", "Ib", "II", "III", "IV")) %>% mutate(comparison_group=dplyr::case_when(population_short %in% c("Ia","Ib","III")~ "HSG pathway",population_short %in% c("II","IV")~ "Non-HSG pathway",TRUE ~ NA_character_),hsg_exposed=ifelse(comparison_group=="HSG pathway",1L,0L),gender_group=clean_gender_group(gender),citizenship_group=clean_citizenship_group(citizenship_status),ethnicity_group=clean_ethnicity_group(ethnicity),chas_group=clean_chas_group(patient_chas_type),smoking_group=clean_smoking_group(smoker),first_encounter_period=dplyr::case_when(first_encounter_date < HSG_START_DATE ~ "First encounter pre-HSG",first_encounter_date >=HSG_START_DATE ~ "First encounter post-HSG",TRUE ~ "Unknown"),first_encounter_quarter=paste0(lubridate::year(first_encounter_date)," Q",lubridate::quarter(first_encounter_date)),clinic_group=collapse_rare_factor(clinic,min_n=PROPENSITY_MIN_FACTOR_LEVEL_N,other_label="Other/rare clinic"),pre_hsg_unique_encounter_dates_capped=pmin(pre_hsg_unique_encounter_dates,as.numeric(stats::quantile(pre_hsg_unique_encounter_dates,0.99,na.rm=TRUE))),pre_hsg_encounter_rows_capped=pmin(pre_hsg_encounter_rows,as.numeric(stats::quantile(pre_hsg_encounter_rows,0.99,na.rm=TRUE))),patient_diabetes_flag=dplyr::coalesce(patient_diabetes_flag,FALSE),patient_pre_diabetes_flag=dplyr::coalesce(patient_pre_diabetes_flag,FALSE),patient_hypertension_flag=dplyr::coalesce(patient_hypertension_flag,FALSE),patient_lipid_disorder_flag=dplyr::coalesce(patient_lipid_disorder_flag,FALSE),patient_asthma_flag=dplyr::coalesce(patient_asthma_flag,FALSE),patient_copd_flag=dplyr::coalesce(patient_copd_flag,FALSE),patient_ischaemic_heart_disease_flag=dplyr::coalesce(patient_ischaemic_heart_disease_flag,FALSE),patient_ischemic_heart_disease_flag=dplyr::coalesce(patient_ischemic_heart_disease_flag,FALSE),patient_ihd_flag=dplyr::coalesce(patient_ihd_flag,FALSE),patient_nephritis_nephrosis_flag=dplyr::coalesce(patient_nephritis_nephrosis_flag,FALSE),patient_chronic_kidney_disease_flag=dplyr::coalesce(patient_chronic_kidney_disease_flag,FALSE),patient_ckd_flag=dplyr::coalesce(patient_ckd_flag,FALSE),patient_ihd_any_flag=patient_ischaemic_heart_disease_flag | patient_ischemic_heart_disease_flag | patient_ihd_flag,patient_kidney_disease_flag=patient_nephritis_nephrosis_flag | patient_chronic_kidney_disease_flag | patient_ckd_flag)
+patient_chronic_flag_columns<-names(patient_level_main)[
+stringr::str_detect(names(patient_level_main), "^patient_") &
+  stringr::str_detect(names(patient_level_main), "_flag$")
+]
+patient_level_main<-patient_level_main %>% mutate(chronic_disease_count=rowSums(as.data.frame(across(all_of(patient_chronic_flag_columns))),na.rm=TRUE),chronic_disease_count_capped=pmin(chronic_disease_count,5),patient_female_flag=gender_group=="Female",patient_vaccination_eligible_flag=(!is.na(age_at_reference)& age_at_reference > VACCINE_AGE_THRESHOLD)| patient_diabetes_flag | patient_ihd_any_flag | patient_asthma_flag | patient_copd_flag,denom_all_eligible=TRUE,denom_women_40_69=patient_female_flag & !is.na(age_at_reference)& age_at_reference >=HPV_PAP_MIN_AGE & age_at_reference <=HPV_PAP_MAX_AGE,denom_women_50_69=patient_female_flag & !is.na(age_at_reference)& age_at_reference >=MAMMOGRAPHY_MIN_AGE & age_at_reference <=MAMMOGRAPHY_MAX_AGE,denom_age_ge50=!is.na(age_at_reference)& age_at_reference >=FIT_MIN_AGE,denom_diabetes=patient_diabetes_flag,denom_hypertension=patient_hypertension_flag,denom_lipid_disorder=patient_lipid_disorder_flag,denom_asthma=patient_asthma_flag,denom_vaccine_eligible=patient_vaccination_eligible_flag)%>% mutate(observation_start_date=dplyr::case_when(comparison_group=="HSG pathway" & !is.na(first_valid_enrolment_reference_date)~ pmax(first_valid_enrolment_reference_date,STUDY_START_DATE),comparison_group=="Non-HSG pathway" & !is.na(first_encounter_date)~ pmax(first_encounter_date,STUDY_START_DATE),TRUE ~ as.Date(NA)),observation_end_date_initial=dplyr::case_when(comparison_group=="HSG pathway" & !is.na(first_deenrolment_event_date)& first_deenrolment_event_date <=STUDY_END_DATE ~ first_deenrolment_event_date,TRUE ~ STUDY_END_DATE),observation_end_date=dplyr::case_when(CENSOR_AT_LAST_OBSERVED_ENCOUNTER ~ pmin(observation_end_date_initial,last_encounter_date,na.rm=TRUE),TRUE ~ observation_end_date_initial),observation_days=as.numeric(observation_end_date - observation_start_date)+ 1,observation_days=ifelse(is.na(observation_days),NA_real_,pmax(observation_days,MINIMUM_PERSON_TIME_DAYS)),person_years=observation_days / 365.25)%>% filter(!is.na(observation_start_date),!is.na(observation_end_date),!is.na(person_years),person_years > 0)
+if (nrow(patient_level_main) == 0) {
+stop("No patients remain in the final analytic cohort after observation-window construction.")
+}
+readr::write_csv(patient_level_main,file.path(TABLE_DIR,"Figure_4_patient_level_main_before_IPTW.csv"))
+cohort_counts<-patient_level_main %>% count(population_short, comparison_group, name = "patients") %>% arrange(population_short)
+readr::write_csv(cohort_counts,file.path(TABLE_DIR,"Figure_4_population_counts.csv"))
+ps_data<-patient_level_main %>% mutate(gender_group=factor(gender_group),citizenship_group=factor(citizenship_group),ethnicity_group=factor(ethnicity_group),chas_group=factor(chas_group),smoking_group=factor(smoking_group),first_encounter_period=factor(first_encounter_period),first_encounter_quarter=collapse_rare_factor(first_encounter_quarter,min_n=PROPENSITY_MIN_FACTOR_LEVEL_N,other_label="Other/rare quarter"),clinic_group=factor(clinic_group),ps_diabetes=as.integer(patient_diabetes_flag),ps_pre_diabetes=as.integer(patient_pre_diabetes_flag),ps_hypertension=as.integer(patient_hypertension_flag),ps_lipid_disorder=as.integer(patient_lipid_disorder_flag),ps_asthma=as.integer(patient_asthma_flag),ps_copd=as.integer(patient_copd_flag),ps_ihd=as.integer(patient_ihd_any_flag),ps_kidney_disease=as.integer(patient_kidney_disease_flag),ps_pre_hsg_any_bmi_bp_smoking=as.integer(pre_hsg_any_bmi_bp_smoking),ps_pre_hsg_any_screening=as.integer(pre_hsg_any_screening),ps_pre_hsg_any_lab_proxy=as.integer(pre_hsg_any_lab_proxy))
+candidate_ps_terms<-c(paste0("splines::ns(age_at_reference, df = ",PROPENSITY_NS_AGE_DF,")"),"gender_group","citizenship_group","ethnicity_group","chas_group","smoking_group","first_encounter_period","first_encounter_quarter","clinic_group","chronic_disease_count_capped","pre_hsg_unique_encounter_dates_capped","pre_hsg_encounter_rows_capped","ps_pre_hsg_any_bmi_bp_smoking","ps_pre_hsg_any_screening","ps_pre_hsg_any_lab_proxy","ps_diabetes","ps_pre_diabetes","ps_hypertension","ps_lipid_disorder","ps_asthma","ps_copd","ps_ihd","ps_kidney_disease")
+term_is_usable<-function(data,term) {
+if (stringr::str_detect(term, "splines::ns\\(")) {
+  return(
+  "age_at_reference" %in% names(data) &&
+  sum(!is.na(data$age_at_reference)) >= 20 &&
+  length(unique(data$age_at_reference[!is.na(data$age_at_reference)])) >= 5
+  )
+}
+if (!term %in% names(data)) {
+  return(FALSE)
+}
+x<-data[[term]]
+if (is.factor(x) || is.character(x)) {
+  x_chr<-as.character(x)
+  x_chr[is.na(x_chr) | x_chr == ""] <- "Unknown"
+  return(length(unique(x_chr)) >= 2)
+}
+x_num<-suppressWarnings(as.numeric(x))
+return(
+  sum(!is.na(x_num)) >= 20 &&
+  is.finite(stats::var(x_num,na.rm=TRUE)) &&
+  stats::var(x_num,na.rm=TRUE) > 0
+)
+}
+usable_ps_terms<-candidate_ps_terms[
+vapply(candidate_ps_terms,function(term) term_is_usable(ps_data,term),logical(1))
+]
+if (length(usable_ps_terms) == 0) {
+stop("No usable propensity-score covariates were available.")
+}
+ps_formula<-stats::as.formula(paste0("hsg_exposed ~ ",paste(usable_ps_terms,collapse=" + ")))
+ps_fit<-NULL
+ps_model_status<-NA_character_
+if (USE_BRGLM2_FOR_PROPENSITY_IF_AVAILABLE && has_brglm2) {
+ps_fit<-tryCatch(
+  {
+  glm(
+  formula=ps_formula,
+  data=ps_data,
+  family = binomial(link = "logit"),
+  method=brglm2::brglmFit,
+  control = brglm2::brglmControl(type = "AS_mean", maxit = 200)
+  )
+  },
+  error=function(e) {
+  NULL
+  }
+)
+if (!is.null(ps_fit)) {
+  ps_model_status <- "brglm2 bias-reduced logistic regression"
+}
+}
+if (is.null(ps_fit)) {
+ps_fit<-glm(
+  formula=ps_formula,
+  data=ps_data,
+  family = binomial(link = "logit"),
+  control=glm.control(maxit=200)
+)
+ps_model_status <- "ordinary logistic regression"
+}
+ps_hat_raw <- as.numeric(stats::predict(ps_fit, newdata = ps_data, type = "response"))
+ps_hat<-pmin(pmax(ps_hat_raw,PROPENSITY_PS_LOWER_BOUND),PROPENSITY_PS_UPPER_BOUND)
+p_treated<-mean(ps_data$hsg_exposed == 1)
+p_untreated<-1 - p_treated
+iptw_stabilized<-ifelse(ps_data$hsg_exposed==1,p_treated / ps_hat,p_untreated / (1 - ps_hat))
+iptw_final<-iptw_stabilized
+iptw_lower_cut<-NA_real_
+iptw_upper_cut<-NA_real_
+if (TRUNCATE_IPTW) {
+iptw_lower_cut<-as.numeric(stats::quantile(iptw_final,IPTW_LOWER_QUANTILE,na.rm=TRUE))
+iptw_upper_cut<-as.numeric(stats::quantile(iptw_final,IPTW_UPPER_QUANTILE,na.rm=TRUE))
+iptw_final<-pmin(pmax(iptw_final,iptw_lower_cut),iptw_upper_cut)
+}
+if (RENORMALIZE_FINAL_WEIGHTS_TO_MEAN_ONE) {
+iptw_final<-iptw_final / mean(iptw_final,na.rm=TRUE)
+}
+patient_level_main<-patient_level_main %>% mutate(propensity_score_raw=ps_hat_raw,propensity_score_bounded=ps_hat,iptw_stabilized=iptw_stabilized,iptw_final=iptw_final,ps_model_status=ps_model_status)
+ps_diagnostics<-patient_level_main %>% summarise(n_patients=n(),n_hsg=sum(hsg_exposed==1),n_nonhsg=sum(hsg_exposed==0),treated_probability=mean(hsg_exposed==1),ps_min_raw=min(propensity_score_raw,na.rm=TRUE),ps_p01_raw=as.numeric(quantile(propensity_score_raw,0.01,na.rm=TRUE)),ps_median_raw=median(propensity_score_raw,na.rm=TRUE),ps_p99_raw=as.numeric(quantile(propensity_score_raw,0.99,na.rm=TRUE)),ps_max_raw=max(propensity_score_raw,na.rm=TRUE),ps_lower_bound=PROPENSITY_PS_LOWER_BOUND,ps_upper_bound=PROPENSITY_PS_UPPER_BOUND,iptw_min=min(iptw_final,na.rm=TRUE),iptw_p01=as.numeric(quantile(iptw_final,0.01,na.rm=TRUE)),iptw_median=median(iptw_final,na.rm=TRUE),iptw_mean=mean(iptw_final,na.rm=TRUE),iptw_p99=as.numeric(quantile(iptw_final,0.99,na.rm=TRUE)),iptw_max=max(iptw_final,na.rm=TRUE),iptw_truncated=TRUNCATE_IPTW,iptw_lower_cut=iptw_lower_cut,iptw_upper_cut=iptw_upper_cut,ps_model_status=first(ps_model_status))
+readr::write_csv(patient_level_main,file.path(DIAGNOSTIC_DIR,"Figure_4_patient_level_with_propensity_scores_and_IPTW.csv"))
+readr::write_csv(ps_diagnostics,file.path(DIAGNOSTIC_DIR,"Figure_4_propensity_score_weight_diagnostics.csv"))
+saveRDS(
+ps_fit,
+file.path(DIAGNOSTIC_DIR, "Figure_4_propensity_score_model.rds")
+)
+balance_numeric_vars<-c("age_at_reference","chronic_disease_count","pre_hsg_unique_encounter_dates","pre_hsg_encounter_rows")
+balance_binary_vars<-c("patient_diabetes_flag","patient_pre_diabetes_flag","patient_hypertension_flag","patient_lipid_disorder_flag","patient_asthma_flag","patient_copd_flag","patient_ihd_any_flag","patient_kidney_disease_flag")
+balance_factor_vars<-c("gender_group","citizenship_group","ethnicity_group","chas_group","smoking_group","first_encounter_period")
+balance_rows<-list()
+balance_index<-1L
+for (v in balance_numeric_vars) {
+if (v %in% names(patient_level_main)) {
+balance_rows[[balance_index]]<-tibble(variable=v,level=NA_character_,variable_type="numeric",smd_unweighted=smd_numeric(x=patient_level_main[[v]],treat=patient_level_main$hsg_exposed,w=rep(1,nrow(patient_level_main))),smd_weighted=smd_numeric(x=patient_level_main[[v]],treat=patient_level_main$hsg_exposed,w=patient_level_main$iptw_final))
+  balance_index<-balance_index + 1L
+}
+}
+for (v in balance_binary_vars) {
+if (v %in% names(patient_level_main)) {
+  x<-as.integer(patient_level_main[[v]])
+balance_rows[[balance_index]]<-tibble(variable=v,level="TRUE",variable_type="binary",smd_unweighted=smd_numeric(x=x,treat=patient_level_main$hsg_exposed,w=rep(1,nrow(patient_level_main))),smd_weighted=smd_numeric(x=x,treat=patient_level_main$hsg_exposed,w=patient_level_main$iptw_final))
+  balance_index<-balance_index + 1L
+}
+}
+for (v in balance_factor_vars) {
+if (v %in% names(patient_level_main)) {
+  x<-as.character(patient_level_main[[v]])
+  x[is.na(x) | x == ""] <- "Unknown"
+  levels_v<-sort(unique(x))
+  for (lev in levels_v) {
+  x_binary<-as.integer(x == lev)
+balance_rows[[balance_index]]<-tibble(variable=v,level=lev,variable_type="factor-level",smd_unweighted=smd_numeric(x=x_binary,treat=patient_level_main$hsg_exposed,w=rep(1,nrow(patient_level_main))),smd_weighted=smd_numeric(x=x_binary,treat=patient_level_main$hsg_exposed,w=patient_level_main$iptw_final))
+  balance_index<-balance_index + 1L
+  }
+}
+}
+balance_table<-bind_rows(balance_rows) %>% mutate(abs_smd_unweighted=abs(smd_unweighted),abs_smd_weighted=abs(smd_weighted))%>% arrange(desc(abs_smd_weighted))
+readr::write_csv(balance_table,file.path(DIAGNOSTIC_DIR,"Figure_4_IPTW_covariate_balance_SMD.csv"))
+data_observed<-data_window %>% semi_join(patient_level_main %>% select(patient), by = "patient") %>% left_join(patient_level_main %>% select(patient,observation_start_date,observation_end_date),by="patient")%>% filter(!is.na(observation_start_date),!is.na(observation_end_date),encounter_date >=observation_start_date,encounter_date <=observation_end_date)
+patient_date_encounters<-data_observed %>% group_by(patient,encounter_date) %>% summarise(encounter_month=lubridate::floor_date(dplyr::first(encounter_date),unit="month"),evt_annual_health_plan=any(row_annual_health_plan,na.rm=TRUE),evt_bmi_bp_smoking=any(row_any_bmi_bp_smoking,na.rm=TRUE),evt_any_screening=any(row_any_general_screening,na.rm=TRUE),evt_cvrf_screening=any(row_cvrf_screening,na.rm=TRUE),evt_hpv_pap=any(row_screening_hpv_pap,na.rm=TRUE),evt_mammography=any(row_screening_mammography,na.rm=TRUE),evt_fit=any(row_screening_fit,na.rm=TRUE),evt_hba1c=any(row_any_hba1c,na.rm=TRUE),evt_drp=any(row_any_drp,na.rm=TRUE),evt_dfs=any(row_any_dfs,na.rm=TRUE),evt_renal_monitoring=any(row_any_renal_monitoring,na.rm=TRUE),evt_bp_assessment=any(row_any_bp_assessment,na.rm=TRUE),evt_lipid_monitoring=any(row_any_lipid_monitoring,na.rm=TRUE),evt_respiratory_assessment=any(row_any_respiratory_assessment,na.rm=TRUE),evt_influenza_pneumococcal_vaccination=any(row_influenza_pneumococcal_vaccination,na.rm=TRUE),.groups="drop")
+patient_event_counts<-patient_date_encounters %>% group_by(patient) %>% summarise(cnt_annual_health_plan=sum(evt_annual_health_plan,na.rm=TRUE),cnt_bmi_bp_smoking=sum(evt_bmi_bp_smoking,na.rm=TRUE),cnt_any_screening=sum(evt_any_screening,na.rm=TRUE),cnt_cvrf_screening=sum(evt_cvrf_screening,na.rm=TRUE),cnt_hpv_pap=sum(evt_hpv_pap,na.rm=TRUE),cnt_mammography=sum(evt_mammography,na.rm=TRUE),cnt_fit=sum(evt_fit,na.rm=TRUE),cnt_hba1c=sum(evt_hba1c,na.rm=TRUE),cnt_drp=sum(evt_drp,na.rm=TRUE),cnt_dfs=sum(evt_dfs,na.rm=TRUE),cnt_renal_monitoring=sum(evt_renal_monitoring,na.rm=TRUE),cnt_bp_assessment=sum(evt_bp_assessment,na.rm=TRUE),cnt_lipid_monitoring=sum(evt_lipid_monitoring,na.rm=TRUE),cnt_respiratory_assessment=sum(evt_respiratory_assessment,na.rm=TRUE),cnt_influenza_pneumococcal_vaccination=sum(evt_influenza_pneumococcal_vaccination,na.rm=TRUE),.groups="drop")
+patient_level_main<-patient_level_main %>% left_join(patient_event_counts, by = "patient") %>% mutate(across(.cols=starts_with("cnt_"),.fns=~ tidyr::replace_na(.x,0)))
+readr::write_csv(patient_date_encounters,file.path(TABLE_DIR,"Figure_4_patient_date_endpoint_events.csv"))
+readr::write_csv(patient_level_main,file.path(TABLE_DIR,"Figure_4_patient_level_with_endpoint_counts.csv"))
+endpoint_definitions<-tibble::tribble(~endpoint_id,~endpoint_label,~endpoint_domain,~denominator_col,~event_count_col,~endpoint_order,"annual_health_plan","Annual health plan","All eligible patients","denom_all_eligible","cnt_annual_health_plan",1L,"bmi_bp_smoking","BMI/BP/smoking assessment","All eligible patients","denom_all_eligible","cnt_bmi_bp_smoking",2L,"cvrf_screening","CVRF screening","All eligible patients","denom_all_eligible","cnt_cvrf_screening",3L,"hpv_pap","HPV","Women 40-69","denom_women_40_69","cnt_hpv_pap",4L,"mammography","Mammography","Women 50-69","denom_women_50_69","cnt_mammography",5L,"fit","FIT","Age ≥50","denom_age_ge50","cnt_fit",6L,"diabetes_hba1c","HbA1c monitoring","Diabetes mellitus","denom_diabetes","cnt_hba1c",7L,"diabetes_drp","Diabetic retinal photography","Diabetes mellitus","denom_diabetes","cnt_drp",8L,"diabetes_dfs","Diabetic foot screening","Diabetes mellitus","denom_diabetes","cnt_dfs",9L,"diabetes_renal_monitoring","Renal monitoring","Diabetes mellitus","denom_diabetes","cnt_renal_monitoring",10L,"hypertension_bp_assessment","BP assessment","Hypertension","denom_hypertension","cnt_bp_assessment",11L,"hypertension_renal_monitoring","Renal monitoring","Hypertension","denom_hypertension","cnt_renal_monitoring",12L,"lipid_disorder_lipid_monitoring","Lipid monitoring","Hyperlipidemia","denom_lipid_disorder","cnt_lipid_monitoring",13L,"asthma_respiratory_assessment","Respiratory assessment","Asthma","denom_asthma","cnt_respiratory_assessment",14L,"vaccine_influenza_pneumococcal","Influenza/pneumococcal vaccination","Vaccine-eligible","denom_vaccine_eligible","cnt_influenza_pneumococcal_vaccination",15L)
+patient_level_main<-patient_level_main %>% mutate(sg_overall=TRUE,sg_age_40_64=!is.na(age_at_reference)& age_at_reference >=40 & age_at_reference <=64,sg_age_ge65=!is.na(age_at_reference)& age_at_reference >=65,sg_sg_citizen=citizenship_group=="SG Citizen",sg_permanent_resident=citizenship_group=="Permanent resident",sg_female=gender_group=="Female",sg_male=gender_group=="Male",sg_chas_green=chas_group=="CHAS Green",sg_chas_orange=chas_group=="CHAS Orange",sg_chas_blue=chas_group=="CHAS Blue",sg_chinese=ethnicity_group=="Chinese",sg_malay=ethnicity_group=="Malay",sg_indian=ethnicity_group=="Indian",sg_chronic_0=chronic_disease_count==0,sg_chronic_1=chronic_disease_count==1,sg_chronic_ge2=chronic_disease_count >=2,sg_diabetes=patient_diabetes_flag,sg_htn=patient_hypertension_flag,sg_hld=patient_lipid_disorder_flag,sg_asthma=patient_asthma_flag)
+subgroup_definitions<-tibble::tribble(~subgroup_id,~subgroup_label,~subgroup_col,~subgroup_order,"overall","Overall","sg_overall",1L,"age_40_64","Age 40-64","sg_age_40_64",2L,"age_ge65","Age ≥65","sg_age_ge65",3L,"sg_citizen","SG Citizen","sg_sg_citizen",4L,"permanent_resident","Permanent resident","sg_permanent_resident",5L,"female","Female","sg_female",6L,"male","Male","sg_male",7L,"chas_green","CHAS Green","sg_chas_green",8L,"chas_orange","CHAS Orange","sg_chas_orange",9L,"chas_blue","CHAS Blue","sg_chas_blue",10L,"chinese","Chinese","sg_chinese",11L,"malay","Malay","sg_malay",12L,"indian","Indian","sg_indian",13L,"chronic_0","0 chronic diseases","sg_chronic_0",14L,"chronic_1","1 chronic disease","sg_chronic_1",15L,"chronic_ge2","≥2 chronic diseases","sg_chronic_ge2",16L,"diabetes","Diabetes mellitus","sg_diabetes",17L,"htn","Hypertension","sg_htn",18L,"hld","Hyperlipidemia","sg_hld",19L,"asthma","Asthma","sg_asthma",20L)
+forest_row_template<-tibble::tribble(~row_id,~row_type,~subgroup_id,~display_label,~display_order,"row_overall","subgroup","overall","Overall",1L,"header_age","header",NA_character_,"Age",2L,"row_age_40_64","subgroup","age_40_64","Age 40-64",3L,"row_age_ge65","subgroup","age_ge65","Age \u226565",4L,"header_citizenship","header",NA_character_,"Citizenship",5L,"row_sg_citizen","subgroup","sg_citizen","SG Citizen",6L,"row_permanent_resident","subgroup","permanent_resident","Permanent resident",7L,"header_gender","header",NA_character_,"Gender",8L,"row_female","subgroup","female","Female",9L,"row_male","subgroup","male","Male",10L,"header_chas","header",NA_character_,"CHAS benefits tier",11L,"row_chas_green","subgroup","chas_green","CHAS Green",12L,"row_chas_orange","subgroup","chas_orange","CHAS Orange",13L,"row_chas_blue","subgroup","chas_blue","CHAS Blue",14L,"header_ethnicity","header",NA_character_,"Ethnicity",15L,"row_chinese","subgroup","chinese","Chinese",16L,"row_malay","subgroup","malay","Malay",17L,"row_indian","subgroup","indian","Indian",18L,"header_chronic_diseases","header",NA_character_,"Chronic diseases",19L,"row_chronic_0","subgroup","chronic_0","0 chronic diseases",20L,"row_chronic_1","subgroup","chronic_1","1 chronic disease",21L,"row_chronic_ge2","subgroup","chronic_ge2","\u22652 chronic diseases",22L,"row_diabetes","subgroup","diabetes","Diabetes mellitus",23L,"row_htn","subgroup","htn","Hypertension",24L,"row_hld","subgroup","hld","Hyperlipidemia",25L,"row_asthma","subgroup","asthma","Asthma",26L)
+readr::write_csv(endpoint_definitions,file.path(TABLE_DIR,"Figure_4_endpoint_definitions.csv"))
+readr::write_csv(subgroup_definitions,file.path(TABLE_DIR,"Figure_4_subgroup_definitions.csv"))
+readr::write_csv(forest_row_template,file.path(TABLE_DIR,"Figure_4_forest_row_template.csv"))
+marginal_rate_from_model <- function(fit, vcov_matrix, data, exposure_value, weight_col = "iptw_final") {
+newdata<-data
+newdata$hsg_exposed<-exposure_value
+terms_obj<-stats::delete.response(stats::terms(fit))
+X<-stats::model.matrix(terms_obj,data=newdata)
+beta<-stats::coef(fit)
+beta<-beta[!is.na(beta)]
+common_terms<-intersect(colnames(X),names(beta))
+if (length(common_terms) == 0) {
+  stop("No common model-matrix terms were found for marginal prediction.")
+}
+X_use<-X[,common_terms,drop=FALSE]
+beta_use<-beta[common_terms]
+vcov_use<-vcov_matrix[common_terms,common_terms,drop=FALSE]
+w<-as.numeric(newdata[[weight_col]])
+py<-as.numeric(newdata$person_years)
+keep<-!is.na(w) &
+  is.finite(w) &
+  w > 0 &
+  !is.na(py) &
+  is.finite(py) &
+  py > 0
+X_use<-X_use[keep,,drop=FALSE]
+w<-w[keep]
+py<-py[keep]
+eta<-as.numeric(X_use %*% beta_use)
+rate_i<-exp(eta)
+denominator_py<-sum(w * py)
+marginal_rate<-sum(w * py * rate_i) / denominator_py
+weighted_X<-X_use * as.numeric(w * py * rate_i)
+derivative<-colSums(weighted_X) / denominator_py
+list(rate=marginal_rate,derivative=derivative,vcov=vcov_use)
+}
+estimate_ird_quasipoisson<-function(
+  analysis_df,
+  endpoint_id,
+  endpoint_label,
+  endpoint_domain,
+  subgroup_id,
+  subgroup_label
+) {
+df<-analysis_df %>% filter(!is.na(hsg_exposed),!is.na(events),!is.na(person_years),person_years > 0,!is.na(iptw_final),is.finite(iptw_final),iptw_final > 0)%>% mutate(hsg_exposed=as.integer(hsg_exposed),events=as.numeric(events),person_years=as.numeric(person_years),iptw_final=as.numeric(iptw_final),clinic=dplyr::if_else(is.na(as.character(clinic))| stringr::str_squish(as.character(clinic))=="","Unknown clinic",stringr::str_squish(as.character(clinic))),clinic_fixed_effect=factor(clinic))
+n_total<-nrow(df)
+n_hsg<-sum(df$hsg_exposed == 1)
+n_nonhsg<-sum(df$hsg_exposed == 0)
+n_clinics<-dplyr::n_distinct(df$clinic_fixed_effect)
+py_total<-sum(df$person_years,na.rm=TRUE)
+py_hsg<-sum(df$person_years[df$hsg_exposed == 1],na.rm=TRUE)
+py_nonhsg<-sum(df$person_years[df$hsg_exposed == 0],na.rm=TRUE)
+events_total<-sum(df$events,na.rm=TRUE)
+events_hsg<-sum(df$events[df$hsg_exposed == 1],na.rm=TRUE)
+events_nonhsg<-sum(df$events[df$hsg_exposed == 0],na.rm=TRUE)
+weighted_events_hsg<-sum(df$iptw_final[df$hsg_exposed == 1] * df$events[df$hsg_exposed == 1],na.rm=TRUE)
+weighted_events_nonhsg<-sum(df$iptw_final[df$hsg_exposed == 0] * df$events[df$hsg_exposed == 0],na.rm=TRUE)
+weighted_py_hsg<-sum(df$iptw_final[df$hsg_exposed == 1] * df$person_years[df$hsg_exposed == 1],na.rm=TRUE)
+weighted_py_nonhsg<-sum(df$iptw_final[df$hsg_exposed == 0] * df$person_years[df$hsg_exposed == 0],na.rm=TRUE)
+weighted_empirical_rate_hsg<-ifelse(weighted_py_hsg > 0,weighted_events_hsg / weighted_py_hsg,NA_real_)
+weighted_empirical_rate_nonhsg<-ifelse(weighted_py_nonhsg > 0,weighted_events_nonhsg / weighted_py_nonhsg,NA_real_)
+base_result<-tibble(endpoint_id=endpoint_id,endpoint_label=endpoint_label,endpoint_domain=endpoint_domain,subgroup_id=subgroup_id,subgroup_label=subgroup_label,n_total=n_total,n_hsg=n_hsg,n_nonhsg=n_nonhsg,n_clinics=n_clinics,person_years_total=py_total,person_years_hsg=py_hsg,person_years_nonhsg=py_nonhsg,events_total=events_total,events_hsg=events_hsg,events_nonhsg=events_nonhsg,weighted_empirical_rate_hsg_per_py=weighted_empirical_rate_hsg,weighted_empirical_rate_nonhsg_per_py=weighted_empirical_rate_nonhsg,weighted_empirical_ird_per_py=weighted_empirical_rate_hsg - weighted_empirical_rate_nonhsg,model_rate_hsg_per_py=NA_real_,model_rate_nonhsg_per_py=NA_real_,model_ird_per_py=NA_real_,model_ird_se_per_py=NA_real_,model_ird_ci_low_per_py=NA_real_,model_ird_ci_high_per_py=NA_real_,model_ird_p_value=NA_real_,model_status=NA_character_,outcome_model_clinic_fixed_effect=FALSE,outcome_model_vcov_type=NA_character_,zero_event_continuity_applied=FALSE,zero_event_continuity_note=NA_character_)
+if (n_hsg < MIN_PATIENTS_PER_ARM || n_nonhsg < MIN_PATIENTS_PER_ARM) {
+  return(
+  base_result %>% mutate(model_status=paste0("Not estimable: fewer than ",MIN_PATIENTS_PER_ARM," patients in at least one exposure arm"))
+  )
+}
+if (py_hsg < MIN_PERSON_YEARS_PER_ARM || py_nonhsg < MIN_PERSON_YEARS_PER_ARM) {
+  return(
+  base_result %>% mutate(model_status=paste0("Not estimable: fewer than ",MIN_PERSON_YEARS_PER_ARM," person-years in at least one exposure arm"))
+  )
+}
+if (events_total == 0) {
+  return(
+  base_result %>% mutate(model_rate_hsg_per_py=0,model_rate_nonhsg_per_py=0,model_ird_per_py=0,model_status="Not estimable: zero events in both exposure arms")
+  )
+}
+df<-df %>% mutate(events_model=events)
+zero_event_notes<-character(0)
+zero_event_correction_applied<-FALSE
+if (APPLY_ZERO_EVENT_CONTINUITY_FOR_MODEL_FITTING) {
+  if (events_hsg == 0 && n_hsg > 0) {
+  df<-df %>% mutate(events_model=ifelse(hsg_exposed==1,events_model + ZERO_EVENT_CONTINUITY_TOTAL / n_hsg,events_model))
+  zero_event_correction_applied<-TRUE
+zero_event_notes<-c(zero_event_notes,paste0("HSG arm had zero observed events; added total continuity correction of ",ZERO_EVENT_CONTINUITY_TOTAL," event for model fitting only"))
+  }
+  if (events_nonhsg == 0 && n_nonhsg > 0) {
+  df<-df %>% mutate(events_model=ifelse(hsg_exposed==0,events_model + ZERO_EVENT_CONTINUITY_TOTAL / n_nonhsg,events_model))
+  zero_event_correction_applied<-TRUE
+zero_event_notes<-c(zero_event_notes,paste0("Non-HSG arm had zero observed events; added total continuity correction of ",ZERO_EVENT_CONTINUITY_TOTAL," event for model fitting only"))
+  }
+}
+rhs_terms <- c("hsg_exposed")
+if (OUTCOME_MODEL_INCLUDE_COVARIATES) {
+rhs_terms<-c(rhs_terms,"splines::ns(age_at_reference, df = 3)","gender_group","citizenship_group","ethnicity_group","chas_group","chronic_disease_count_capped")
+}
+clinic_fixed_effect_used<-isTRUE(OUTCOME_MODEL_INCLUDE_CLINIC_FIXED_EFFECTS) &&
+  n_clinics >= MIN_CLINICS_FOR_CLINIC_FIXED_EFFECT
+if (clinic_fixed_effect_used) {
+  rhs_terms <- c(rhs_terms, "clinic_fixed_effect")
+}
+outcome_formula<-stats::as.formula(paste0("events_model ~ ",paste(rhs_terms,collapse=" + ")))
+fit<-tryCatch(
+  {
+  glm(
+  formula=outcome_formula,
+  data=df,
+  family = quasipoisson(link = "log"),
+  offset=log(person_years),
+  weights=iptw_final,
+  control=glm.control(maxit=200)
+  )
+  },
+  error=function(e) {
+  e
+  }
+)
+if (inherits(fit, "error")) {
+  return(
+  base_result %>% mutate(model_status=paste0("Model failed: ",conditionMessage(fit)),zero_event_continuity_applied=zero_event_correction_applied,zero_event_continuity_note=ifelse(length(zero_event_notes)==0,NA_character_,paste(zero_event_notes,collapse="; ")))
+  )
+}
+vcov_type_used<-NA_character_
+robust_vcov<-tryCatch(
+  {
+  if (
+  isTRUE(OUTCOME_MODEL_USE_CLUSTER_ROBUST_BY_CLINIC) &&
+  n_clinics >= MIN_CLINICS_FOR_CLUSTER_ROBUST_SE
+  ) {
+  vcov_type_used <- paste0("Clinic-clustered sandwich vcovCL (", ROBUST_VCOV_TYPE, ")")
+sandwich::vcovCL(fit,cluster=df$clinic_fixed_effect,type=ROBUST_VCOV_TYPE)
+  } else {
+  vcov_type_used <- paste0("Heteroskedasticity-robust sandwich vcovHC (", ROBUST_VCOV_TYPE, ")")
+  sandwich::vcovHC(fit,type=ROBUST_VCOV_TYPE)
+  }
+  },
+  error=function(e) {
+  vcov_type_used <<- "Classical model vcov fallback"
+  stats::vcov(fit)
+  }
+)
+if (is.null(dim(robust_vcov))) {
+  vcov_type_used <- "Classical model vcov fallback"
+  robust_vcov<-stats::vcov(fit)
+}
+rate_hsg<-tryCatch(
+  marginal_rate_from_model(
+  fit=fit,
+  vcov_matrix=robust_vcov,
+  data=df,
+  exposure_value=1,
+  weight_col = "iptw_final"
+  ),
+  error=function(e) {
+  e
+  }
+)
+rate_nonhsg<-tryCatch(
+  marginal_rate_from_model(
+  fit=fit,
+  vcov_matrix=robust_vcov,
+  data=df,
+  exposure_value=0,
+  weight_col = "iptw_final"
+  ),
+  error=function(e) {
+  e
+  }
+)
+if (inherits(rate_hsg, "error") || inherits(rate_nonhsg, "error")) {
+  error_message <- if (inherits(rate_hsg, "error")) {
+  conditionMessage(rate_hsg)
+  } else {
+  conditionMessage(rate_nonhsg)
+  }
+  return(
+  base_result %>% mutate(model_status=paste0("Marginal prediction failed: ",error_message),zero_event_continuity_applied=zero_event_correction_applied,zero_event_continuity_note=ifelse(length(zero_event_notes)==0,NA_character_,paste(zero_event_notes,collapse="; ")))
+  )
+}
+common_terms<-intersect(names(rate_hsg$derivative),names(rate_nonhsg$derivative))
+deriv_diff<-rate_hsg$derivative[common_terms] - rate_nonhsg$derivative[common_terms]
+vcov_use<-robust_vcov[common_terms,common_terms,drop=FALSE]
+ird<-rate_hsg$rate - rate_nonhsg$rate
+var_ird<-as.numeric(t(deriv_diff) %*% vcov_use %*% deriv_diff)
+se_ird<-sqrt(max(var_ird,0))
+ci_low<-ird - stats::qnorm(0.975) * se_ird
+ci_high<-ird + stats::qnorm(0.975) * se_ird
+p_value<-ifelse(is.finite(se_ird)&& se_ird > 0,2 * stats::pnorm(abs(ird / se_ird),lower.tail=FALSE),NA_real_)
+base_result %>% mutate(model_rate_hsg_per_py=rate_hsg$rate,model_rate_nonhsg_per_py=rate_nonhsg$rate,model_ird_per_py=ird,model_ird_se_per_py=se_ird,model_ird_ci_low_per_py=ci_low,model_ird_ci_high_per_py=ci_high,model_ird_p_value=p_value,model_status="OK",outcome_model_clinic_fixed_effect=clinic_fixed_effect_used,outcome_model_vcov_type=vcov_type_used,zero_event_continuity_applied=zero_event_correction_applied,zero_event_continuity_note=ifelse(length(zero_event_notes)==0,NA_character_,paste(zero_event_notes,collapse="; ")))
+}
+all_results<-list()
+result_index<-1L
+for (e in seq_len(nrow(endpoint_definitions))) {
+endpoint_row<-endpoint_definitions[e,]
+endpoint_id<-endpoint_row$endpoint_id
+endpoint_label<-endpoint_row$endpoint_label
+endpoint_domain<-endpoint_row$endpoint_domain
+denominator_col<-endpoint_row$denominator_col
+event_count_col<-endpoint_row$event_count_col
+if (!denominator_col %in% names(patient_level_main)) {
+  stop("Denominator column not found: ", denominator_col)
+}
+if (!event_count_col %in% names(patient_level_main)) {
+  stop("Event-count column not found: ", event_count_col)
+}
+endpoint_base_df<-patient_level_main %>% mutate(endpoint_eligible=.data[[denominator_col]],events=.data[[event_count_col]])
+for (s in seq_len(nrow(subgroup_definitions))) {
+  subgroup_row<-subgroup_definitions[s,]
+  subgroup_id<-subgroup_row$subgroup_id
+  subgroup_label<-subgroup_row$subgroup_label
+  subgroup_col<-subgroup_row$subgroup_col
+  if (!subgroup_col %in% names(endpoint_base_df)) {
+  stop("Subgroup column not found: ", subgroup_col)
+  }
+  analysis_df<-endpoint_base_df %>% filter(endpoint_eligible,.data[[subgroup_col]])%>% select(patient,hsg_exposed,comparison_group,clinic,person_years,iptw_final,events,age_at_reference,gender_group,citizenship_group,ethnicity_group,chas_group,chronic_disease_count_capped)
+  result_i<-estimate_ird_quasipoisson(
+  analysis_df=analysis_df,
+  endpoint_id=endpoint_id,
+  endpoint_label=endpoint_label,
+  endpoint_domain=endpoint_domain,
+  subgroup_id=subgroup_id,
+  subgroup_label=subgroup_label
+  ) %>% mutate(endpoint_order=endpoint_row$endpoint_order,subgroup_order=subgroup_row$subgroup_order,denominator_col=denominator_col,event_count_col=event_count_col)
+  all_results[[result_index]]<-result_i
+  result_index<-result_index + 1L
+}
+}
+results_all<-bind_rows(all_results) %>% mutate(model_rate_hsg_display=model_rate_hsg_per_py * IRD_DISPLAY_SCALE,model_rate_nonhsg_display=model_rate_nonhsg_per_py * IRD_DISPLAY_SCALE,model_ird_display=model_ird_per_py * IRD_DISPLAY_SCALE,model_ird_se_display=model_ird_se_per_py * IRD_DISPLAY_SCALE,model_ird_ci_low_display=model_ird_ci_low_per_py * IRD_DISPLAY_SCALE,model_ird_ci_high_display=model_ird_ci_high_per_py * IRD_DISPLAY_SCALE,weighted_empirical_rate_hsg_display=weighted_empirical_rate_hsg_per_py * IRD_DISPLAY_SCALE,weighted_empirical_rate_nonhsg_display=weighted_empirical_rate_nonhsg_per_py * IRD_DISPLAY_SCALE,weighted_empirical_ird_display=weighted_empirical_ird_per_py * IRD_DISPLAY_SCALE,estimable=model_status=="OK" & !is.na(model_ird_per_py)& !is.na(model_ird_ci_low_per_py)& !is.na(model_ird_ci_high_per_py),significant_95=estimable & !is.na(model_ird_ci_low_per_py)& !is.na(model_ird_ci_high_per_py)& ((model_ird_ci_low_per_py > 0 & model_ird_ci_high_per_py > 0)| (model_ird_ci_low_per_py < 0 & model_ird_ci_high_per_py < 0)),result_print=dplyr::case_when(estimable ~ paste0(fmt_sig3(model_ird_display)," (",fmt_sig3(model_ird_ci_low_display)," to ",fmt_sig3(model_ird_ci_high_display),")"),TRUE ~ "Not estimable"),n_print=paste0("N=",scales::comma(n_total),"; HSG ",scales::comma(n_hsg)," / non-HSG ",scales::comma(n_nonhsg)),event_py_print=paste0("Events ",scales::comma(events_total),"; PY ",fmt_sig3(person_years_total)))%>% arrange(endpoint_order,subgroup_order)
+readr::write_csv(results_all,file.path(TABLE_DIR,"Figure_4_IPTW_IRD_all_endpoint_results.csv"))
+theme_forest<-function(base_size=BASE_FONT_SIZE) {
+ggplot2::theme_minimal(base_size=base_size) + ggplot2::theme(
+  text=ggplot2::element_text(
+  family = "sans",
+  colour = "#111111",
+  size=base_size
+  ),
+  plot.title=ggtext::element_markdown(
+  face = "plain",
+  size=base_size,
+  colour = "#111111",
+  hjust=0.5,
+  lineheight=1.05,
+  margin=ggplot2::margin(b=6)
+  ),
+  plot.subtitle=ggplot2::element_blank(),
+  plot.caption=ggplot2::element_blank(),
+  axis.title.x=ggplot2::element_text(
+  face = "plain",
+  size=base_size,
+  colour = "#111111",
+  margin=ggplot2::margin(t=5)
+  ),
+  axis.title.y=ggplot2::element_blank(),
+  axis.text.x=ggplot2::element_text(
+  size=base_size,
+  colour = "#333333"
+  ),
+  axis.text.y=ggplot2::element_blank(),
+  panel.grid.major.y=ggplot2::element_blank(),
+  panel.grid.major.x=ggplot2::element_blank(),
+  panel.grid.minor=ggplot2::element_blank(),
+  axis.line.x=ggplot2::element_line(
+  colour = "#333333",
+  linewidth=0.25
+  ),
+  axis.ticks.x=ggplot2::element_line(
+  colour = "#333333",
+  linewidth=0.25
+  ),
+  axis.ticks.y=ggplot2::element_blank(),
+  legend.position = "none",
+  plot.margin=ggplot2::margin(
+  t=6,
+  r=120,
+  b=6,
+  l=135
+  )
+  )
+}
+calculate_axis_window<-function(ci_low,ci_high,estimate) {
+finite_low<-ci_low[is.finite(ci_low)]
+finite_high<-ci_high[is.finite(ci_high)]
+finite_est<-estimate[is.finite(estimate)]
+finite_all<-c(finite_low,finite_high,finite_est)
+if (length(finite_all) == 0) {
+  return(
+list(axis_min=-1,axis_max=1)
+  )
+}
+min_low<-min(finite_low,finite_est,0,na.rm=TRUE)
+max_high<-max(finite_high,finite_est,0,na.rm=TRUE)
+if (!is.finite(min_low)) min_low<-0
+if (!is.finite(max_high)) max_high<-1
+if (length(finite_low) > 0 && all(finite_low >= 0,na.rm=TRUE)) {
+  axis_min<-0
+  axis_max<-max_high * 1.05
+} else if (length(finite_high) > 0 && all(finite_high <= 0,na.rm=TRUE)) {
+  axis_min<-min_low * 1.05
+  axis_max<-0
+} else {
+  raw_range<-max_high - min_low
+  if (!is.finite(raw_range) || raw_range <= 0) {
+  raw_range<-max(abs(finite_all),na.rm=TRUE)
+  if (!is.finite(raw_range) || raw_range <= 0) {
+  raw_range<-1
+  }
+  }
+  axis_min<-min_low - 0.05 * raw_range
+  axis_max<-max_high + 0.05 * raw_range
+}
+if (axis_min == axis_max) {
+  axis_min<-axis_min - 0.5
+  axis_max<-axis_max + 0.5
+}
+list(axis_min=axis_min,axis_max=axis_max)
+}
+nice_axis_breaks<-function(
+  axis_min,
+  axis_max,
+  n_breaks=X_AXIS_N_BREAKS,
+  rounding_unit=X_AXIS_ROUNDING_UNIT
+) {
+if (!is.finite(axis_min) || !is.finite(axis_max) || axis_max <= axis_min) {
+  return(c(0,rounding_unit,2 * rounding_unit))
+}
+tick_min<-if (axis_min > -rounding_unit) {
+  0
+} else {
+  floor(axis_min / rounding_unit) * rounding_unit
+}
+tick_max<-round(axis_max / rounding_unit) * rounding_unit
+if (!is.finite(tick_max)) {
+  tick_max<-tick_min + rounding_unit * (n_breaks - 1)
+}
+if (tick_max <= tick_min) {
+  tick_max<-ceiling(axis_max / rounding_unit) * rounding_unit
+}
+if (tick_max <= tick_min) {
+  tick_max<-tick_min + rounding_unit * (n_breaks - 1)
+}
+raw_step<-(tick_max - tick_min) / (n_breaks - 1)
+step<-max(
+  rounding_unit,
+  round(raw_step / rounding_unit) * rounding_unit
+)
+breaks<-tick_min + step * 0:(n_breaks - 1)
+if (max(breaks,na.rm=TRUE) < tick_max) {
+  step<-ceiling(raw_step / rounding_unit) * rounding_unit
+  step<-max(step,rounding_unit)
+  breaks<-tick_min + step * 0:(n_breaks - 1)
+}
+round(breaks,10)
+}
+save_plot_all_formats<-function(plot_object,filename_stub,width,height,dpi) {
+if (SAVE_PDF) {
+  pdf_path <- file.path(PLOT_DIR, paste0(filename_stub, ".pdf"))
+  ggplot2::ggsave(
+  filename=pdf_path,
+  plot=plot_object,
+  width=width,
+  height=height,
+  units = "in",
+  device=grDevices::cairo_pdf,
+  bg = "white",
+  limitsize=FALSE
+  )
+}
+if (SAVE_PNG) {
+  png_path <- file.path(PLOT_DIR, paste0(filename_stub, ".png"))
+  ggplot2::ggsave(
+  filename=png_path,
+  plot=plot_object,
+  width=width,
+  height=height,
+  units = "in",
+  dpi=dpi,
+  bg = "white",
+  limitsize=FALSE
+  )
+}
+if (SAVE_JPEG) {
+  jpeg_path <- file.path(PLOT_DIR, paste0(filename_stub, ".jpeg"))
+  if (has_ragg) {
+  ragg::agg_jpeg(
+  filename=jpeg_path,
+  width=width,
+  height=height,
+  units = "in",
+  res=dpi,
+  background = "white"
+  )
+  print(plot_object)
+  grDevices::dev.off()
+  } else {
+  ggplot2::ggsave(
+  filename=jpeg_path,
+  plot=plot_object,
+  width=width,
+  height=height,
+  units = "in",
+  dpi=dpi,
+  device = "jpeg",
+  bg = "white",
+  limitsize=FALSE
+  )
+  }
+}
+}
+make_endpoint_forest_plot<-function(endpoint_results) {
+endpoint_results<-endpoint_results %>% arrange(subgroup_order)
+forest_df<-forest_row_template %>% left_join(endpoint_results,by="subgroup_id")%>% arrange(display_order) %>% mutate(y_position=max(display_order,na.rm=TRUE)- display_order + 1,display_estimate=model_ird_display,display_ci_low=model_ird_ci_low_display,display_ci_high=model_ird_ci_high_display,value_label=dplyr::case_when(row_type=="header" ~ "",row_type=="subgroup" & is.na(result_print)~ "Not estimable",TRUE ~ result_print),label_fontface=dplyr::case_when(row_type=="header" ~ "bold",subgroup_id=="overall" ~ "bold",TRUE ~ "plain"))
+axis_info_raw<-calculate_axis_window(
+  ci_low = forest_df$display_ci_low[forest_df$row_type == "subgroup"],
+  ci_high = forest_df$display_ci_high[forest_df$row_type == "subgroup"],
+  estimate = forest_df$display_estimate[forest_df$row_type == "subgroup"]
+)
+x_breaks<-nice_axis_breaks(
+  axis_min=axis_info_raw$axis_min,
+  axis_max=axis_info_raw$axis_max,
+  n_breaks=X_AXIS_N_BREAKS,
+  rounding_unit=X_AXIS_ROUNDING_UNIT
+)
+axis_plot_min<-min(axis_info_raw$axis_min,min(x_breaks,na.rm=TRUE),na.rm=TRUE)
+axis_plot_max<-max(axis_info_raw$axis_max,max(x_breaks,na.rm=TRUE),na.rm=TRUE)
+axis_plot_range<-axis_plot_max - axis_plot_min
+if (!is.finite(axis_plot_range) || axis_plot_range <= 0) {
+  axis_plot_range<-1
+}
+label_x<-axis_plot_min - 0.025 * axis_plot_range
+text_x<-axis_plot_max + 0.05 * axis_plot_range
+endpoint_label<-endpoint_results$endpoint_label[1]
+endpoint_domain<-endpoint_results$endpoint_domain[1]
+title_text<-paste0(endpoint_domain,"<br><span style='color:#666666;'><i>",endpoint_label,"</i></span>")
+p<-ggplot(forest_df,aes(y=y_position)) + geom_blank(aes(x=0)) + geom_vline(xintercept=0,linetype="solid",linewidth=ZERO_LINEWIDTH,colour=COLOUR_ZERO)+ geom_segment(data=forest_df %>% filter(row_type=="subgroup",estimable),aes(x=display_ci_low,xend=display_ci_high,y=y_position,yend=y_position),linewidth=SEGMENT_LINEWIDTH,colour=COLOUR_CI,lineend="round")+ geom_point(data=forest_df %>% filter(row_type=="subgroup",estimable),aes(x=display_estimate,y=y_position),shape=15,size=POINT_SIZE,colour=COLOUR_POINT)+ geom_text(data=forest_df,aes(x=label_x,y=y_position,label=display_label,fontface=label_fontface),size=TEXT_SIZE_MM,hjust=1,colour="#111111")+ geom_text(data=forest_df %>% filter(row_type=="subgroup"),aes(x=text_x,y=y_position,label=value_label),size=TEXT_SIZE_MM,hjust=0,colour="#111111")+ scale_y_continuous(breaks=forest_df$y_position,labels=rep("",nrow(forest_df)),expand=expansion(add=c(0.85,0.15)))+ scale_x_continuous(breaks=x_breaks,labels=function(x)formatC(x,format="f",digits=X_AXIS_LABEL_DIGITS),expand=expansion(mult=c(0.01,0.03)))+ labs(title=title_text,x=IRD_DISPLAY_AXIS_LABEL,y=NULL)+ coord_cartesian(xlim=c(axis_plot_min,axis_plot_max),clip="off")+ theme_forest(base_size=BASE_FONT_SIZE)
+p
+}
+plot_registry<-list()
+for (endpoint_id_i in endpoint_definitions$endpoint_id) {
+endpoint_results_i<-results_all %>% filter(endpoint_id == endpoint_id_i) %>% arrange(subgroup_order)
+plot_i<-make_endpoint_forest_plot(endpoint_results_i)
+filename_stub<-paste0("Figure_4_IPTW_IRD_forest_",make_slug(endpoint_id_i))
+save_plot_all_formats(
+  plot_object=plot_i,
+  filename_stub=filename_stub,
+  width=FIGURE_WIDTH,
+  height=FIGURE_HEIGHT,
+  dpi=FIGURE_DPI
+)
+plot_registry[[endpoint_id_i]]<-plot_i
+readr::write_csv(endpoint_results_i,file.path(TABLE_DIR,paste0("Figure_4_IPTW_IRD_results_",make_slug(endpoint_id_i),".csv")))
+}
+manuscript_results_compact<-results_all %>% transmute(endpoint_domain,endpoint_label,subgroup_label,n_total,n_hsg,n_nonhsg,person_years_total,events_total,events_hsg,events_nonhsg,hsg_rate_events_per_person_year=model_rate_hsg_display,nonhsg_rate_events_per_person_year=model_rate_nonhsg_display,ird_events_per_person_year=model_ird_display,ci_low_events_per_person_year=model_ird_ci_low_display,ci_high_events_per_person_year=model_ird_ci_high_display,p_value=model_ird_p_value,result_print,model_status,n_clinics,outcome_model_clinic_fixed_effect,outcome_model_vcov_type,zero_event_continuity_applied,zero_event_continuity_note)
+readr::write_csv(manuscript_results_compact,file.path(TABLE_DIR,"Figure_4_IPTW_IRD_manuscript_results_compact.csv"))
+print(cohort_counts)
+print(ps_diagnostics)
+print(results_all %>% count(endpoint_domain,endpoint_label,model_status,name="n_rows")%>% arrange(endpoint_domain,endpoint_label,model_status))
