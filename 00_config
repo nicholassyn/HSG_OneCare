@@ -1,0 +1,31 @@
+# edit these paths only
+DATA_PATH <- "E:/Briefcase/OneCare/HSG_manuscript/Raw Data/all_encounters_long_merged.csv"
+OUT_DIR <- "E:/Briefcase/OneCare/HSG_manuscript/public_repro_outputs"
+INTERNAL_OUTPUT_DIR <- "E:/Briefcase/OneCare/HSG_manuscript"
+
+HSG_START_DATE <- as.Date("2023-07-01")
+HSG_PRE_ENROLMENT_DATE <- as.Date("2023-05-01")
+STUDY_START_DATE <- as.Date("2023-01-01")
+STUDY_END_DATE <- as.Date("2025-12-31")
+MINIMUM_AGE <- 40
+
+USE_AHP_AS_ENROLMENT <- FALSE
+ALLOW_SAME_DAY_ENROL_DEENROL <- TRUE
+KEEP_MISSING_CITIZENSHIP <- TRUE
+DROP_MISSING_AGE <- TRUE
+
+VACCINE_CODES_FLU <- c("A-INF")
+VACCINE_CODES_PNC <- c("A-PCV","A-PCV20","A-PPSV","A-PNC")
+VACCINE_CODES_ALL <- c(VACCINE_CODES_FLU,VACCINE_CODES_PNC)
+
+PS_LOWER <- 0.01
+PS_UPPER <- 0.99
+TRUNC_Q_LOW <- 0.01
+TRUNC_Q_HIGH <- 0.99
+CAP_Q <- 0.99
+
+FIG_DPI <- 250
+SHOW_RAW_PLOTS <- TRUE
+
+OUT_ROOT <- OUT_DIR
+dir.create(OUT_DIR,recursive=TRUE,showWarnings=FALSE)
