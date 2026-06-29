@@ -1,0 +1,27 @@
+source("00_config.R"); source("01_common_definitions.R")
+od<-file.path(OUT_DIR,"table1_figure1_raw"); dir.create(od,recursive=TRUE,showWarnings=FALSE)
+# fidelity-first public version: use the final manuscript-facing Table 1 outputs,
+# then draw raw/plain versions from those counts.
+t1_path<-file.path(INTERNAL_OUTPUT_DIR,"Table_1","Table_1_baseline_characteristics_Figure1A_matched.csv")
+if(!file.exists(t1_path)) stop("Missing final Table 1 file: ",t1_path)
+t1<-readr::read_csv(t1_path,show_col_types=FALSE)
+write_csv(t1,file.path(od,"table1_raw.csv"))
+# pull population denominators from the final table row, avoiding any Ia/Ib naming issue
+pat_row<-t1 %>% filter(Characteristic=="Patients, n")
+enc_row<-t1 %>% filter(Characteristic=="Analytic encounter rows, n")
+if(nrow(pat_row)==0) stop("Cannot find 'Patients, n' row in final Table 1 csv")
+parse_n<-function(x) as.integer(gsub("[^0-9]","",as.character(x)))
+cts<-tibble::tibble(
+ population_group=c("I","II","III","IV"),
+ patients=c(parse_n(pat_row[["Population I"]]),parse_n(pat_row[["Population II"]]),parse_n(pat_row[["Population III"]]),parse_n(pat_row[["Population IV"]])),
+ encounters=if(nrow(enc_row)>0) c(parse_n(enc_row[["Population I"]]),parse_n(enc_row[["Population II"]]),parse_n(enc_row[["Population III"]]),parse_n(enc_row[["Population IV"]])) else NA_integer_
+)
+write_csv(cts,file.path(od,"population_counts.csv"))
+flow<-tibble::tibble(step=c("Final analytic cohort",paste0("Population ",cts$population_group)),n=c(parse_n(pat_row[["Overall"]]),cts$patients))
+write_csv(flow,file.path(od,"figure1_flow_counts.csv"))
+p1<-ggplot(flow,aes(x=step,y=n))+geom_col()+coord_flip()+labs(x=NULL,y="Patients",title="Raw cohort flow")
+ggsave(file.path(od,"figure1A_raw.png"),p1,width=7,height=4,dpi=FIG_DPI)
+# if final Figure 1 denominator counts are not provided as a separate table, use manuscript-facing values from final Figure 1D.
+denom<-tibble::tibble(category=c("Women 40-69","No preexisting DM/HTN/HLD","Age >=50","Vaccine-eligible","Asthma","Lipid disorder","Hypertension","Diabetes"),n=c(18979,25274,23816,11015,2457,11461,10418,3621))
+write_csv(denom,file.path(od,"figure1D_denominators.csv"))
+ggsave(file.path(od,"figure1D_raw.png"),ggplot(denom,aes(x=reorder(category,n),y=n))+geom_col()+coord_flip()+labs(x=NULL,y="Patients",title="Endpoint denominators"),width=7,height=4,dpi=FIG_DPI)
