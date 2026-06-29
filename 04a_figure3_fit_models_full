@@ -1,0 +1,2563 @@
+rm(list = ls())
+if (file.exists(file.path(dirname(getwd()), "00_config.R"))) { source(file.path(dirname(getwd()), "00_config.R")) } else if (file.exists("00_config.R")) { source("00_config.R") }
+if (!exists("OUT_DIR")) OUT_DIR <- "E:/Briefcase/OneCare/HSG_manuscript/public_repro_outputs"
+PUBLIC_MODEL_ROOT <- file.path(dirname(OUT_DIR), "public_repro_model_outputs")
+dir.create(PUBLIC_MODEL_ROOT, recursive = TRUE, showWarnings = FALSE)
+options(stringsAsFactors = FALSE)
+options(scipen = 999)
+DATA_PATH <- get("DATA_PATH", envir = .GlobalEnv)
+OUT_DIR <- file.path(PUBLIC_MODEL_ROOT, "Figure_3_ITS")
+dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+PLOT_DIR <- file.path(OUT_DIR, "plots_linear_counterfactual_stabilised")
+TABLE_DIR <- file.path(OUT_DIR, "tables_linear_counterfactual_stabilised")
+MODEL_DIR <- file.path(OUT_DIR, "model_objects_linear_counterfactual_stabilised")
+dir.create(PLOT_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(TABLE_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(MODEL_DIR, recursive = TRUE, showWarnings = FALSE)
+STUDY_START_DATE <- as.Date("2023-01-01")
+HSG_START_DATE <- as.Date("2023-07-01")
+HSG_PRE_ENROLMENT_DATE <- as.Date("2023-05-01")
+STUDY_END_DATE <- as.Date("2025-12-31")
+APPLY_ANALYTIC_DATE_WINDOW <- FALSE
+ANALYTIC_START_DATE <- as.Date("2023-01-01")
+ANALYTIC_END_DATE <- as.Date("2024-03-31")
+ITS_COMPARISON_MODE <- "PRIMARY_POP_I_VS_II"
+APPLY_AGE_FILTER <- TRUE
+MINIMUM_AGE <- 40
+KEEP_PATIENTS_WITH_MISSING_AGE <- FALSE
+APPLY_CITIZENSHIP_FILTER <- TRUE
+KEEP_PATIENTS_WITH_MISSING_CITIZENSHIP <- TRUE
+ALLOW_SAME_DAY_ENROLMENT_AND_DEENROLMENT <- TRUE
+USE_ANNUAL_HEALTH_PLAN_AS_ENROLMENT_EVIDENCE <- FALSE
+VACCINE_AGE_THRESHOLD <- 65
+VACCINATION_INCLUDED_CODES <- c(
+ "A-INF",
+ "A-PCV",
+ "A-PCV20",
+ "A-PPSV",
+ "A-PNC"
+)
+MIN_DENOMINATOR_PER_MONTH <- 20
+MIN_MODEL_MONTHS <- 12
+MIN_PRE_MONTHS <- 4
+MIN_POST_MONTHS <- 4
+NEWEY_WEST_LAG_MONTHS <- 3
+COVARIATE_MISSINGNESS_THRESHOLD <- 0.20
+MAX_ADJUSTMENT_COVARIATES <- 6
+MIN_NONMISSING_MONTHS_FOR_COVARIATE <- 8
+CAP_EXTREME_MODEL_WEIGHTS <- TRUE
+WEIGHT_CAP_QUANTILE <- 0.99
+LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE <- "smooth_damped_pretrend"
+COUNTERFACTUAL_MAX_EFFECTIVE_EXTRAPOLATION_MONTHS <- 9
+COUNTERFACTUAL_DAMPING_HALF_LIFE_MONTHS <- 6
+BOUND_GROUP_RATE_PLOTS_TO_0_100 <- TRUE
+STANDARDIZE_LINEAR_PREDICTION_COVARIATES <- FALSE
+PREDICTION_COVARIATE_REFERENCE <- "pre_period_weighted_mean"
+FIGURE_WIDTH <- 10.5
+FIGURE_HEIGHT <- 7.5
+FIGURE_DPI <- 400
+COLOUR_HSG_DARK <- rgb(0, 84, 157, maxColorValue = 255)
+COLOUR_HSG_LIGHT <- rgb(138, 193, 230, maxColorValue = 255)
+COLOUR_NONHSG_DARK <- rgb(171, 149, 214, maxColorValue = 255)
+COLOUR_NONHSG_LIGHT <- rgb(197, 160, 193, maxColorValue = 255)
+COLOUR_COUNTERFACTUAL <- "#555555"
+COLOUR_FITTED <- "#111111"
+COLOUR_OBSERVED <- "#333333"
+SAVE_PNG <- FALSE
+SAVE_JPEG <- TRUE
+SAVE_PDF <- TRUE
+required_packages <- c(
+ "dplyr",
+ "tibble",
+ "tidyr",
+ "stringr",
+ "lubridate",
+ "janitor",
+ "ggplot2",
+ "scales",
+ "forcats",
+ "purrr",
+ "broom",
+ "lmtest",
+ "sandwich",
+ "grid"
+)
+for (pkg in required_packages) {
+ if (!requireNamespace(pkg, quietly = TRUE)) {
+  install.packages(pkg, dependencies = TRUE)
+ }
+}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(janitor)
+library(ggplot2)
+library(scales)
+library(forcats)
+library(purrr)
+library(broom)
+library(lmtest)
+library(sandwich)
+library(grid)
+has_ragg <- requireNamespace("ragg", quietly = TRUE)
+parse_mixed_date <- function(x) {
+ if (inherits(x, "Date")) {
+  return(x)
+ }
+ if (inherits(x, "POSIXct") || inherits(x, "POSIXlt")) {
+  return(as.Date(x))
+ }
+ if (is.numeric(x)) {
+  out <- rep(as.Date(NA), length(x))
+  valid_excel <- !is.na(x) & x > 20000 & x < 70000
+  out[valid_excel] <- as.Date(x[valid_excel], origin = "1899-12-30")
+  return(out)
+ }
+ x_chr <- as.character(x)
+ x_chr <- stringr::str_squish(x_chr)
+ x_chr[
+  is.na(x_chr) |
+   x_chr == "" |
+   stringr::str_to_upper(x_chr) %in% c(
+    "NA", "N/A", "NULL", "NONE", "NIL", "NAN",
+    "UNKNOWN", "MISSING", "NOT AVAILABLE", "NOT APPLICABLE"
+   )
+ ] <- NA_character_
+ parsed <- suppressWarnings(
+  lubridate::parse_date_time(
+   x_chr,
+   orders = c(
+    "ymd HMS", "ymd HM", "ymd",
+    "dmy HMS", "dmy HM", "dmy",
+    "mdy HMS", "mdy HM", "mdy",
+    "d b Y", "d B Y", "d b y", "d B y",
+    "d-b-Y", "d-B-Y", "d-b-y", "d-B-y",
+    "b d Y", "B d Y", "b d y", "B d y",
+    "m/d/Y", "m/d/y",
+    "d/m/Y", "d/m/y",
+    "Y/m/d",
+    "Y-m-d"
+   ),
+   tz = "UTC",
+   quiet = TRUE
+  )
+ )
+ out <- as.Date(parsed)
+ numeric_x <- suppressWarnings(as.numeric(x_chr))
+ excel_idx <- is.na(out) & !is.na(numeric_x) & numeric_x > 20000 & numeric_x < 70000
+ if (any(excel_idx, na.rm = TRUE)) {
+  out[excel_idx] <- as.Date(numeric_x[excel_idx], origin = "1899-12-30")
+ }
+ out
+}
+is_present <- function(x) {
+ if (inherits(x, "Date")) {
+  return(!is.na(x))
+ }
+ if (inherits(x, "POSIXct") || inherits(x, "POSIXlt")) {
+  return(!is.na(x))
+ }
+ x_chr <- as.character(x)
+ x_chr <- stringr::str_squish(x_chr)
+ x_upper <- stringr::str_to_upper(x_chr)
+ !is.na(x_chr) &
+  x_chr != "" &
+  !(x_upper %in% c(
+   "NA", "N/A", "NULL", "NONE", "NIL", "NAN",
+   "UNKNOWN", "MISSING", "NOT AVAILABLE", "NOT APPLICABLE"
+  ))
+}
+to_numeric_clean <- function(x) {
+ if (is.numeric(x)) {
+  return(x)
+ }
+ x_chr <- as.character(x)
+ x_chr <- stringr::str_squish(x_chr)
+ x_chr[is.na(x_chr) | x_chr == ""] <- NA_character_
+ x_chr <- stringr::str_replace_all(x_chr, ",", "")
+ x_chr <- stringr::str_extract(x_chr, "[-+]?[0-9]*\\.?[0-9]+([eE][-+]?[0-9]+)?")
+ suppressWarnings(as.numeric(x_chr))
+}
+safe_read_csv_character <- function(path, na_values = c("", "NA", "N/A", "NULL", "NaN", "nan")) {
+ utils::read.csv(
+  file = path,
+  stringsAsFactors = FALSE,
+  na.strings = na_values,
+  colClasses = "character",
+  check.names = FALSE,
+  fileEncoding = "UTF-8-BOM"
+ )
+}
+safe_write_csv <- function(x, path) {
+ utils::write.csv(
+  x = as.data.frame(x),
+  file = path,
+  row.names = FALSE,
+  na = ""
+ )
+ invisible(path)
+}
+month_index_between <- function(start_date, end_date) {
+ start_date <- as.Date(start_date)
+ end_date <- as.Date(end_date)
+ out <- (lubridate::year(end_date) - lubridate::year(start_date)) * 12 +
+  (lubridate::month(end_date) - lubridate::month(start_date))
+ as.numeric(out)
+}
+safe_min_date <- function(x) {
+ x <- as.Date(x)
+ x <- x[!is.na(x)]
+ if (length(x) == 0) {
+  return(as.Date(NA))
+ }
+ min(x)
+}
+safe_max_date <- function(x) {
+ x <- as.Date(x)
+ x <- x[!is.na(x)]
+ if (length(x) == 0) {
+  return(as.Date(NA))
+ }
+ max(x)
+}
+first_present_value <- function(x) {
+ keep <- is_present(x)
+ if (!any(keep, na.rm = TRUE)) {
+  return(NA_character_)
+ }
+ as.character(x[keep][1])
+}
+mode_present_value <- function(x) {
+ keep <- is_present(x)
+ if (!any(keep, na.rm = TRUE)) {
+  return(NA_character_)
+ }
+ x_chr <- as.character(x[keep])
+ tab <- sort(table(x_chr), decreasing = TRUE)
+ names(tab)[1]
+}
+to_yes_no_bool <- function(x) {
+ if (is.logical(x)) {
+  return(!is.na(x) & x)
+ }
+ if (is.numeric(x)) {
+  return(!is.na(x) & x != 0)
+ }
+ x_chr <- stringr::str_to_lower(stringr::str_squish(as.character(x)))
+ x_chr[is.na(x_chr)] <- ""
+ negative <- stringr::str_detect(
+  x_chr,
+  "^(0|no|false|n|nil|none|not done|not completed|incomplete|negative|absent)$"
+ )
+ positive <- stringr::str_detect(
+  x_chr,
+  "^(1|yes|true|y|done|completed|complete|positive|present|recorded)$"
+ )
+ positive & !negative
+}
+to_enrolled_bool <- function(x) {
+ x_chr <- stringr::str_to_lower(stringr::str_squish(as.character(x)))
+ x_chr[is.na(x_chr)] <- ""
+ negative <- stringr::str_detect(
+  x_chr,
+  paste0(
+   "not enrolled|not enroled|not enrol|not enroll|",
+   "non-enrolled|non enrolled|unenrolled|un-enrolled|",
+   "de-enrolled|de enrolled|de-enroled|de enroled|",
+   "de-enrol|de enrol|de-enroll|de enroll|",
+   "withdraw|withdrawn|terminated|ceased"
+  )
+ )
+ positive <- stringr::str_detect(
+  x_chr,
+  "enrolled|enroled|enrol|enroll"
+ )
+ positive & !negative
+}
+to_deenrolled_bool <- function(x) {
+ x_chr <- stringr::str_to_lower(stringr::str_squish(as.character(x)))
+ x_chr[is.na(x_chr)] <- ""
+ stringr::str_detect(
+  x_chr,
+  paste0(
+   "de-enrolled|de enrolled|de-enroled|de enroled|",
+   "de-enrol|de enrol|de-enroll|de enroll|",
+   "withdraw|withdrawn|terminated|ceased"
+  )
+ )
+}
+to_condition_bool <- function(x) {
+ if (is.logical(x)) {
+  return(!is.na(x) & x)
+ }
+ if (is.numeric(x)) {
+  return(!is.na(x) & x != 0)
+ }
+ x_chr <- stringr::str_to_lower(stringr::str_squish(as.character(x)))
+ x_chr[is.na(x_chr)] <- ""
+ negative <- x_chr %in% c(
+  "",
+  "na",
+  "n/a",
+  "unknown",
+  "missing",
+  "none",
+  "nil",
+  "no",
+  "0",
+  "false",
+  "negative",
+  "absent",
+  "not present",
+  "not recorded"
+ )
+ positive <- stringr::str_detect(
+  x_chr,
+  "^(1|yes|true|y|present|positive|diagnosed|known|recorded)$"
+ ) |
+  (!negative)
+ positive & !negative
+}
+row_any_present <- function(data, candidate_columns) {
+ present_columns <- intersect(candidate_columns, names(data))
+ if (length(present_columns) == 0) {
+  return(rep(FALSE, nrow(data)))
+ }
+ present_matrix <- vapply(
+  present_columns,
+  function(column_name) {
+   is_present(data[[column_name]])
+  },
+  logical(nrow(data))
+ )
+ if (is.null(dim(present_matrix))) {
+  present_matrix <- matrix(present_matrix, ncol = 1)
+ }
+ rowSums(present_matrix, na.rm = TRUE) > 0
+}
+row_any_enrolled_status <- function(data, candidate_columns) {
+ present_columns <- intersect(candidate_columns, names(data))
+ if (length(present_columns) == 0) {
+  return(rep(FALSE, nrow(data)))
+ }
+ status_matrix <- vapply(
+  present_columns,
+  function(column_name) {
+   to_enrolled_bool(data[[column_name]])
+  },
+  logical(nrow(data))
+ )
+ if (is.null(dim(status_matrix))) {
+  status_matrix <- matrix(status_matrix, ncol = 1)
+ }
+ rowSums(status_matrix, na.rm = TRUE) > 0
+}
+row_any_deenrolled_status <- function(data, candidate_columns) {
+ present_columns <- intersect(candidate_columns, names(data))
+ if (length(present_columns) == 0) {
+  return(rep(FALSE, nrow(data)))
+ }
+ status_matrix <- vapply(
+  present_columns,
+  function(column_name) {
+   to_deenrolled_bool(data[[column_name]])
+  },
+  logical(nrow(data))
+ )
+ if (is.null(dim(status_matrix))) {
+  status_matrix <- matrix(status_matrix, ncol = 1)
+ }
+ rowSums(status_matrix, na.rm = TRUE) > 0
+}
+row_any_vaccination_code <- function(data, candidate_columns, included_codes) {
+ present_columns <- intersect(candidate_columns, names(data))
+ if (length(present_columns) == 0) {
+  return(rep(FALSE, nrow(data)))
+ }
+ included_codes <- unique(stringr::str_to_upper(stringr::str_squish(included_codes)))
+ included_codes <- included_codes[!is.na(included_codes) & included_codes != ""]
+ included_codes <- included_codes[order(nchar(included_codes), decreasing = TRUE)]
+ code_pattern <- paste0(
+  "(^|[^A-Z0-9])(",
+  paste(included_codes, collapse = "|"),
+  ")([^A-Z0-9]|$)"
+ )
+ code_matrix <- vapply(
+  present_columns,
+  function(column_name) {
+   x_chr <- stringr::str_to_upper(stringr::str_squish(as.character(data[[column_name]])))
+   x_chr[is.na(x_chr)] <- ""
+   stringr::str_detect(x_chr, code_pattern)
+  },
+  logical(nrow(data))
+ )
+ if (is.null(dim(code_matrix))) {
+  code_matrix <- matrix(code_matrix, ncol = 1)
+ }
+ rowSums(code_matrix, na.rm = TRUE) > 0
+}
+eligible_citizenship <- function(x, keep_missing = TRUE) {
+ x_chr <- as.character(x)
+ x_chr <- stringr::str_squish(x_chr)
+ x_upper <- stringr::str_to_upper(x_chr)
+ missing_value <- !is_present(x_chr)
+ ineligible_foreign <- stringr::str_detect(
+  x_upper,
+  paste0(
+   "FOREIGN|FOREIGNER|WORK PASS|WORKPASS|WORK PERMIT|",
+   "EMPLOYMENT PASS|\\bE PASS\\b|\\bEP\\b|S PASS|SPASS|",
+   "DEPENDANT PASS|DEPENDENT PASS|LONG.?TERM VISIT PASS|LTVP"
+  )
+ )
+ eligible_local <- stringr::str_detect(
+  x_upper,
+  paste0(
+   "SINGAPOREAN|SINGAPORE CITIZEN|CITIZEN|",
+   "SINGAPORE PR|SINGAPORE PERMANENT RESIDENT|",
+   "PERMANENT RESIDENT|\\bPR\\b"
+  )
+ )
+ eligible_local | (!ineligible_foreign & !missing_value) | (keep_missing & missing_value)
+}
+clean_gender_group <- function(x) {
+ x <- stringr::str_to_upper(stringr::str_squish(as.character(x)))
+ dplyr::case_when(
+  stringr::str_detect(x, "^F$|FEMALE|WOMAN") ~ "Female",
+  stringr::str_detect(x, "^M$|^MALE$|MAN") ~ "Male",
+  TRUE ~ "Unknown"
+ )
+}
+clean_ethnicity_group <- function(x) {
+ x <- stringr::str_to_upper(stringr::str_squish(as.character(x)))
+ dplyr::case_when(
+  stringr::str_detect(x, "CHINESE") ~ "Chinese",
+  stringr::str_detect(x, "MALAY") ~ "Malay",
+  stringr::str_detect(x, "INDIAN") ~ "Indian",
+  x == "" | is.na(x) | x == "UNKNOWN" ~ "Unknown",
+  TRUE ~ "Other"
+ )
+}
+clean_chas_group <- function(x) {
+ x <- stringr::str_to_upper(stringr::str_squish(as.character(x)))
+ dplyr::case_when(
+  stringr::str_detect(x, "BLUE") ~ "Blue",
+  stringr::str_detect(x, "ORANGE") ~ "Orange",
+  stringr::str_detect(x, "GREEN") ~ "Green",
+  x %in% c("NONE", "NO CHAS", "NOT APPLICABLE", "NOT ELIGIBLE") ~ "None",
+  x == "" | is.na(x) | x == "UNKNOWN" ~ "Unknown",
+  TRUE ~ "Other"
+ )
+}
+clean_smoking_group <- function(x) {
+ x <- stringr::str_to_upper(stringr::str_squish(as.character(x)))
+ dplyr::case_when(
+  stringr::str_detect(x, "CURRENT") ~ "Current smoker",
+  stringr::str_detect(x, "EX") ~ "Ex-smoker",
+  stringr::str_detect(x, "FORMER") ~ "Ex-smoker",
+  stringr::str_detect(x, "NEVER") ~ "Never smoker",
+  x == "" | is.na(x) | x == "UNKNOWN" ~ "Unknown",
+  TRUE ~ "Unknown"
+ )
+}
+clean_citizenship_group <- function(x) {
+ x <- stringr::str_to_upper(stringr::str_squish(as.character(x)))
+ dplyr::case_when(
+  stringr::str_detect(x, "PERMANENT RESIDENT|\\bPR\\b") ~ "PR",
+  stringr::str_detect(x, "CITIZEN|SINGAPOREAN") ~ "Citizen",
+  TRUE ~ "Unknown"
+ )
+}
+mean_or_na <- function(x) {
+ x <- as.numeric(x)
+ if (all(is.na(x))) {
+  return(NA_real_)
+ }
+ mean(x, na.rm = TRUE)
+}
+fmt_n <- function(x) {
+ if (length(x) == 0 || is.na(x)) {
+  return("NA")
+ }
+ scales::comma(as.numeric(x), accuracy = 1)
+}
+fmt_p <- function(x) {
+ if (is.na(x)) {
+  return("NA")
+ }
+ if (x < 0.001) {
+  return("<0.001")
+ }
+ formatC(x, format = "f", digits = 3)
+}
+make_slug <- function(x) {
+ x <- stringr::str_to_lower(x)
+ x <- stringr::str_replace_all(x, "[^a-z0-9]+", "_")
+ x <- stringr::str_replace_all(x, "^_+|_+$", "")
+ x
+}
+choose_axis_top <- function(x, allow_negative = FALSE) {
+ x <- x[is.finite(x)]
+ if (length(x) == 0) {
+  return(10)
+ }
+ max_x <- max(x, na.rm = TRUE)
+ if (!allow_negative) {
+  max_x <- max(max_x, 0)
+ }
+ candidates <- c(
+  1.5, 3, 5, 7.5, 10, 15, 20, 25, 30, 40, 50,
+  60, 75, 90, 100, 125, 150
+ )
+ out <- candidates[candidates >= max_x]
+ if (length(out) == 0) {
+  return(ceiling(max_x / 25) * 25)
+ }
+ out[1]
+}
+cap_weights <- function(w) {
+ w <- as.numeric(w)
+ if (!CAP_EXTREME_MODEL_WEIGHTS) {
+  return(w)
+ }
+ finite_w <- w[is.finite(w) & !is.na(w) & w > 0]
+ if (length(finite_w) < 5) {
+  return(w)
+ }
+ cap <- as.numeric(stats::quantile(finite_w, probs = WEIGHT_CAP_QUANTILE, na.rm = TRUE))
+ pmin(w, cap)
+}
+save_plot_all_formats <- function(plot_object, filename_stub, width, height, dpi) {
+ out_paths <- list()
+ if (SAVE_PDF) {
+  pdf_path <- file.path(PLOT_DIR, paste0(filename_stub, ".pdf"))
+  ggplot2::ggsave(
+   filename = pdf_path,
+   plot = plot_object,
+   width = width,
+   height = height,
+   units = "in",
+   device = grDevices::cairo_pdf,
+   bg = "white",
+   limitsize = FALSE
+  )
+  out_paths$pdf <- pdf_path
+ }
+ if (SAVE_PNG) {
+  png_path <- file.path(PLOT_DIR, paste0(filename_stub, ".png"))
+  ggplot2::ggsave(
+   filename = png_path,
+   plot = plot_object,
+   width = width,
+   height = height,
+   units = "in",
+   dpi = dpi,
+   bg = "white",
+   limitsize = FALSE
+  )
+  out_paths$png <- png_path
+ }
+ if (SAVE_JPEG) {
+  jpeg_path <- file.path(PLOT_DIR, paste0(filename_stub, ".jpeg"))
+  if (has_ragg) {
+   ragg::agg_jpeg(
+    filename = jpeg_path,
+    width = width,
+    height = height,
+    units = "in",
+    res = dpi,
+    background = "white"
+   )
+   print(plot_object)
+   grDevices::dev.off()
+  } else {
+   ggplot2::ggsave(
+    filename = jpeg_path,
+    plot = plot_object,
+    width = width,
+    height = height,
+    units = "in",
+    dpi = dpi,
+    device = "jpeg",
+    bg = "white",
+    limitsize = FALSE
+   )
+  }
+  out_paths$jpeg <- jpeg_path
+ }
+ invisible(out_paths)
+}
+theme_its <- function(base_size = 12) {
+ ggplot2::theme_minimal(base_size = base_size) +
+  ggplot2::theme(
+   text = ggplot2::element_text(family = "sans", colour = "#111111"),
+   plot.title = ggplot2::element_text(face = "bold", size = base_size + 2),
+   plot.subtitle = ggplot2::element_text(size = base_size - 0.5, colour = "#444444", lineheight = 1.02),
+   plot.caption = ggplot2::element_text(size = base_size - 2, colour = "#555555", hjust = 0, lineheight = 1.00),
+   axis.title = ggplot2::element_text(face = "bold"),
+   axis.text = ggplot2::element_text(colour = "#333333"),
+   panel.grid.minor = ggplot2::element_blank(),
+   panel.grid.major.x = ggplot2::element_line(colour = "#EFEFEF", linewidth = 0.25),
+   panel.grid.major.y = ggplot2::element_line(colour = "#E6E6E6", linewidth = 0.30),
+   strip.text = ggplot2::element_text(face = "bold", colour = "#111111"),
+   strip.background = ggplot2::element_rect(fill = "#F5F5F5", colour = NA),
+   legend.position = "bottom",
+   legend.title = ggplot2::element_blank(),
+   plot.margin = ggplot2::margin(8, 12, 8, 8)
+  )
+}
+filter_model_covariates <- function(model_df, candidate_terms) {
+ if (length(candidate_terms) == 0) {
+  return(character(0))
+ }
+ keep_terms <- character(0)
+ for (term in candidate_terms) {
+  if (!term %in% names(model_df)) {
+   next
+  }
+  x <- as.numeric(model_df[[term]])
+  n_nonmissing <- sum(!is.na(x))
+  var_x <- suppressWarnings(stats::var(x, na.rm = TRUE))
+  if (
+   n_nonmissing >= MIN_NONMISSING_MONTHS_FOR_COVARIATE &&
+   is.finite(var_x) &&
+   !is.na(var_x) &&
+   var_x > 0.0000000001
+  ) {
+   keep_terms <- c(keep_terms, term)
+  }
+ }
+ keep_terms
+}
+fit_wls_newey <- function(
+  model_df,
+  outcome_col,
+  weight_col,
+  covariate_terms,
+  model_label
+) {
+ required_cols <- unique(c(
+  outcome_col,
+  weight_col,
+  "encounter_month",
+  "month_index",
+  "time",
+  "post",
+  "time_after",
+  covariate_terms
+ ))
+ required_cols <- required_cols[required_cols %in% names(model_df)]
+ model_df <- model_df %>%
+  arrange(encounter_month)
+ model_df <- model_df[stats::complete.cases(model_df[, required_cols, drop = FALSE]), , drop = FALSE]
+ model_df <- model_df[is.finite(model_df[[weight_col]]) & model_df[[weight_col]] > 0, , drop = FALSE]
+ if (nrow(model_df) < MIN_MODEL_MONTHS) {
+  return(
+   list(
+    ok = FALSE,
+    reason = paste0("Too few model months: ", nrow(model_df)),
+    model_label = model_label
+   )
+  )
+ }
+ n_pre <- sum(model_df$post == 0, na.rm = TRUE)
+ n_post <- sum(model_df$post == 1, na.rm = TRUE)
+ if (n_pre < MIN_PRE_MONTHS || n_post < MIN_POST_MONTHS) {
+  return(
+   list(
+    ok = FALSE,
+    reason = paste0(
+     "Insufficient pre/post months. Pre=",
+     n_pre,
+     "; post=",
+     n_post
+    ),
+    model_label = model_label
+   )
+  )
+ }
+ covariate_terms <- filter_model_covariates(model_df, covariate_terms)
+ rhs_terms <- c("time", "post", "time_after", covariate_terms)
+ model_formula <- stats::as.formula(
+  paste0(outcome_col, " ~ ", paste(rhs_terms, collapse = " + "))
+ )
+ model_df$model_weight_internal <- cap_weights(model_df[[weight_col]])
+ fit <- tryCatch(
+  {
+   stats::lm(
+    formula = model_formula,
+    data = model_df,
+    weights = model_weight_internal
+   )
+  },
+  error = function(e) {
+   return(NULL)
+  }
+ )
+ if (is.null(fit)) {
+  return(
+   list(
+    ok = FALSE,
+    reason = "lm() failed",
+    model_label = model_label
+   )
+  )
+ }
+ robust_vcov <- tryCatch(
+  {
+   sandwich::NeweyWest(
+    fit,
+    lag = NEWEY_WEST_LAG_MONTHS,
+    prewhite = FALSE,
+    adjust = TRUE
+   )
+  },
+  error = function(e) {
+   sandwich::vcovHC(fit, type = "HC1")
+  }
+ )
+ robust_type <- "Newey-West"
+ if (is.null(dim(robust_vcov))) {
+  robust_vcov <- stats::vcov(fit)
+  robust_type <- "Classical lm vcov fallback"
+ }
+ list(
+  ok = TRUE,
+  reason = NA_character_,
+  fit = fit,
+  robust_vcov = robust_vcov,
+  model_data = model_df,
+  formula = model_formula,
+  covariate_terms = covariate_terms,
+  model_label = model_label,
+  robust_type = robust_type,
+  outcome_col = outcome_col,
+  weight_col = weight_col,
+  n_model_months = nrow(model_df),
+  n_pre_months = n_pre,
+  n_post_months = n_post
+ )
+}
+linear_combo <- function(fit_obj, contrast_terms, contrast_label) {
+ fit <- fit_obj$fit
+ vc <- fit_obj$robust_vcov
+ beta <- stats::coef(fit)
+ beta <- beta[!is.na(beta)]
+ vc <- vc[names(beta), names(beta), drop = FALSE]
+ L <- rep(0, length(beta))
+ names(L) <- names(beta)
+ missing_terms <- setdiff(names(contrast_terms), names(beta))
+ if (length(missing_terms) > 0) {
+  return(
+   tibble::tibble(
+    contrast = contrast_label,
+    estimate = NA_real_,
+    std_error = NA_real_,
+    conf_low = NA_real_,
+    conf_high = NA_real_,
+    p_value = NA_real_,
+    missing_terms = paste(missing_terms, collapse = "; ")
+   )
+  )
+ }
+ L[names(contrast_terms)] <- as.numeric(contrast_terms)
+ estimate <- as.numeric(sum(L * beta))
+ variance <- as.numeric(t(L) %*% vc %*% L)
+ std_error <- sqrt(max(variance, 0))
+ df_resid <- max(stats::df.residual(fit), 1)
+ critical <- stats::qt(0.975, df = df_resid)
+ if (is.finite(std_error) && std_error > 0) {
+  t_value <- estimate / std_error
+  p_value <- 2 * stats::pt(abs(t_value), df = df_resid, lower.tail = FALSE)
+ } else {
+  p_value <- NA_real_
+ }
+ tibble::tibble(
+  contrast = contrast_label,
+  estimate = estimate,
+  std_error = std_error,
+  conf_low = estimate - critical * std_error,
+  conf_high = estimate + critical * std_error,
+  p_value = p_value,
+  missing_terms = NA_character_
+ )
+}
+make_level_slope_results <- function(
+  fit_obj,
+  process_id,
+  process_label,
+  model_type,
+  comparison_label,
+  denominator_description,
+  numerator_description
+) {
+ if (!isTRUE(fit_obj$ok)) {
+  return(
+   tibble::tibble(
+    process_id = process_id,
+    process_label = process_label,
+    model_type = model_type,
+    comparison = comparison_label,
+    contrast = c("Level change", "Slope change"),
+    estimate = NA_real_,
+    std_error = NA_real_,
+    conf_low = NA_real_,
+    conf_high = NA_real_,
+    p_value = NA_real_,
+    units = c(
+     "percentage-points at HSG launch",
+     "percentage-points per month after HSG launch"
+    ),
+    n_model_months = NA_integer_,
+    n_pre_months = NA_integer_,
+    n_post_months = NA_integer_,
+    nw_lag_months = NEWEY_WEST_LAG_MONTHS,
+    adjustment_covariates = NA_character_,
+    denominator_description = denominator_description,
+    numerator_description = numerator_description,
+    model_status = fit_obj$reason
+   )
+  )
+ }
+ level <- linear_combo(
+  fit_obj = fit_obj,
+  contrast_terms = c("post" = 1),
+  contrast_label = "Level change"
+ )
+ slope <- linear_combo(
+  fit_obj = fit_obj,
+  contrast_terms = c("time_after" = 1),
+  contrast_label = "Slope change"
+ )
+ bind_rows(level, slope) %>%
+  mutate(
+   process_id = process_id,
+   process_label = process_label,
+   model_type = model_type,
+   comparison = comparison_label,
+   units = c(
+    "percentage-points at HSG launch",
+    "percentage-points per month after HSG launch"
+   ),
+   n_model_months = fit_obj$n_model_months,
+   n_pre_months = fit_obj$n_pre_months,
+   n_post_months = fit_obj$n_post_months,
+   nw_lag_months = NEWEY_WEST_LAG_MONTHS,
+   adjustment_covariates = ifelse(
+    length(fit_obj$covariate_terms) == 0,
+    "None",
+    paste(fit_obj$covariate_terms, collapse = "; ")
+   ),
+   denominator_description = denominator_description,
+   numerator_description = numerator_description,
+   model_status = "OK"
+  ) %>%
+  select(
+   process_id,
+   process_label,
+   model_type,
+   comparison,
+   contrast,
+   estimate,
+   std_error,
+   conf_low,
+   conf_high,
+   p_value,
+   units,
+   n_model_months,
+   n_pre_months,
+   n_post_months,
+   nw_lag_months,
+   adjustment_covariates,
+   denominator_description,
+   numerator_description,
+   model_status,
+   missing_terms
+  )
+}
+robust_predict <- function(fit_obj, newdata) {
+ fit <- fit_obj$fit
+ vc <- fit_obj$robust_vcov
+ terms_obj <- stats::delete.response(stats::terms(fit))
+ X <- stats::model.matrix(terms_obj, data = newdata)
+ beta <- stats::coef(fit)
+ beta <- beta[!is.na(beta)]
+ common_terms <- intersect(colnames(X), names(beta))
+ X_use <- X[, common_terms, drop = FALSE]
+ beta_use <- beta[common_terms]
+ vc_use <- vc[common_terms, common_terms, drop = FALSE]
+ fit_value <- as.numeric(X_use %*% beta_use)
+ pred_var <- rowSums((X_use %*% vc_use) * X_use)
+ pred_se <- sqrt(pmax(pred_var, 0))
+ df_resid <- max(stats::df.residual(fit), 1)
+ critical <- stats::qt(0.975, df = df_resid)
+ tibble::tibble(
+  fit = fit_value,
+  se = pred_se,
+  conf_low = fit_value - critical * pred_se,
+  conf_high = fit_value + critical * pred_se
+ )
+}
+get_intervention_month_index <- function() {
+ start_month <- lubridate::floor_date(STUDY_START_DATE, unit = "month")
+ hsg_start_month <- lubridate::floor_date(HSG_START_DATE, unit = "month")
+ month_index_between(start_month, hsg_start_month)
+}
+make_counterfactual_prediction_data <- function(actual_data) {
+ intervention_index <- get_intervention_month_index()
+ actual_data <- actual_data %>%
+  mutate(
+   counterfactual_elapsed_months = pmax(as.numeric(month_index) - intervention_index, 0)
+  )
+ if (LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE == "model_implied_pretrend") {
+  effective_elapsed <- actual_data$counterfactual_elapsed_months
+ } else if (LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE == "implementation_anchor") {
+  effective_elapsed <- rep(0, nrow(actual_data))
+ } else if (LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE == "limited_pretrend") {
+  effective_elapsed <- pmin(
+   actual_data$counterfactual_elapsed_months,
+   COUNTERFACTUAL_MAX_EFFECTIVE_EXTRAPOLATION_MONTHS
+  )
+ } else if (LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE == "smooth_damped_pretrend") {
+  effective_elapsed <- COUNTERFACTUAL_MAX_EFFECTIVE_EXTRAPOLATION_MONTHS *
+   (1 - 0.5^(actual_data$counterfactual_elapsed_months / COUNTERFACTUAL_DAMPING_HALF_LIFE_MONTHS))
+ } else {
+  warning(
+   "Unknown LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE: ",
+   LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE,
+   "; using original model-implied pretrend."
+  )
+  effective_elapsed <- actual_data$counterfactual_elapsed_months
+ }
+ effective_elapsed <- ifelse(actual_data$post == 1L, effective_elapsed, 0)
+ actual_data %>%
+  mutate(
+   counterfactual_mode = LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE,
+   counterfactual_elapsed_months = counterfactual_elapsed_months,
+   counterfactual_effective_elapsed_months = effective_elapsed,
+   counterfactual_time_used = dplyr::if_else(
+    post == 1L,
+    as.numeric(intervention_index + effective_elapsed),
+    as.numeric(time)
+   ),
+   time = counterfactual_time_used,
+   post = 0L,
+   time_after = 0
+  )
+}
+standardize_prediction_covariates <- function(
+  prediction_data,
+  reference_data,
+  covariate_terms,
+  weight_col = NULL
+) {
+ if (!isTRUE(STANDARDIZE_LINEAR_PREDICTION_COVARIATES)) {
+  return(prediction_data)
+ }
+ if (length(covariate_terms) == 0) {
+  return(prediction_data)
+ }
+ covariate_terms <- intersect(covariate_terms, names(prediction_data))
+ covariate_terms <- intersect(covariate_terms, names(reference_data))
+ if (length(covariate_terms) == 0) {
+  return(prediction_data)
+ }
+ reference_df <- reference_data
+ if (PREDICTION_COVARIATE_REFERENCE == "pre_period_weighted_mean") {
+  reference_df <- reference_df %>% filter(post == 0)
+ }
+ if (nrow(reference_df) == 0) {
+  reference_df <- reference_data
+ }
+ w <- rep(1, nrow(reference_df))
+ if (!is.null(weight_col) && weight_col %in% names(reference_df)) {
+  w_candidate <- as.numeric(reference_df[[weight_col]])
+  if (any(is.finite(w_candidate) & !is.na(w_candidate) & w_candidate > 0)) {
+   w <- w_candidate
+  }
+ }
+ for (covariate in covariate_terms) {
+  x <- as.numeric(reference_df[[covariate]])
+  keep <- !is.na(x) & is.finite(x) & !is.na(w) & is.finite(w) & w > 0
+  if (any(keep)) {
+   prediction_data[[covariate]] <- sum(x[keep] * w[keep]) / sum(w[keep])
+  }
+ }
+ prediction_data
+}
+bound_group_plot_values <- function(x) {
+ x <- as.numeric(x)
+ if (isTRUE(BOUND_GROUP_RATE_PLOTS_TO_0_100)) {
+  x <- pmin(pmax(x, 0), 100)
+ }
+ x
+}
+make_prediction_table <- function(fit_obj, model_kind) {
+ if (!isTRUE(fit_obj$ok)) {
+  return(tibble::tibble())
+ }
+ actual_data <- fit_obj$model_data
+ covariate_terms <- fit_obj$covariate_terms
+ weight_col <- fit_obj$weight_col
+ outcome_col <- fit_obj$outcome_col
+ actual_prediction_data <- standardize_prediction_covariates(
+  prediction_data = actual_data,
+  reference_data = actual_data,
+  covariate_terms = covariate_terms,
+  weight_col = weight_col
+ )
+ actual_pred <- robust_predict(fit_obj, actual_prediction_data) %>%
+  rename(
+   fitted = fit,
+   fitted_se = se,
+   fitted_low = conf_low,
+   fitted_high = conf_high
+  )
+ counterfactual_data <- make_counterfactual_prediction_data(actual_data)
+ counterfactual_prediction_data <- standardize_prediction_covariates(
+  prediction_data = counterfactual_data,
+  reference_data = actual_data,
+  covariate_terms = covariate_terms,
+  weight_col = weight_col
+ )
+ counterfactual_pred <- robust_predict(fit_obj, counterfactual_prediction_data) %>%
+  rename(
+   counterfactual = fit,
+   counterfactual_se = se,
+   counterfactual_low = conf_low,
+   counterfactual_high = conf_high
+  )
+ out <- bind_cols(
+  actual_data,
+  actual_pred,
+  counterfactual_prediction_data %>%
+   select(
+    counterfactual_mode,
+    counterfactual_elapsed_months,
+    counterfactual_effective_elapsed_months,
+    counterfactual_time_used
+   ),
+  counterfactual_pred
+ ) %>%
+  mutate(
+   model_kind = model_kind,
+   counterfactual_is_stabilised = LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE != "model_implied_pretrend"
+  )
+ if (!is.null(outcome_col) && outcome_col == "rate_percent") {
+  out <- out %>%
+   mutate(
+    fitted_plot = bound_group_plot_values(fitted),
+    fitted_low_plot = bound_group_plot_values(fitted_low),
+    fitted_high_plot = bound_group_plot_values(fitted_high),
+    counterfactual_plot = bound_group_plot_values(counterfactual),
+    counterfactual_low_plot = bound_group_plot_values(counterfactual_low),
+    counterfactual_high_plot = bound_group_plot_values(counterfactual_high)
+   )
+ } else {
+  out <- out %>%
+   mutate(
+    fitted_plot = fitted,
+    fitted_low_plot = fitted_low,
+    fitted_high_plot = fitted_high,
+    counterfactual_plot = counterfactual,
+    counterfactual_low_plot = counterfactual_low,
+    counterfactual_high_plot = counterfactual_high
+   )
+ }
+ out
+}
+if (!file.exists(DATA_PATH)) {
+ stop("DATA_PATH does not exist: ", DATA_PATH)
+}
+raw_data <- safe_read_csv_character(
+ DATA_PATH,
+ na_values = c("", "NA", "N/A", "NULL", "NaN", "nan")
+)
+data_clean <- raw_data %>%
+ janitor::clean_names()
+if (!"patient" %in% names(data_clean)) {
+ stop("A patient identifier column named 'patient' is required after janitor::clean_names().")
+}
+if (!"encounter_date" %in% names(data_clean)) {
+ stop("A column named 'encounter_date' is required after janitor::clean_names().")
+}
+required_optional_columns <- c(
+ "clinic",
+ "encounter_kind",
+ "enrolment_date",
+ "de_enrolment_date",
+ "annual_health_plan",
+ "c_year_of_birth",
+ "citizenship_status",
+ "gender",
+ "ethnicity",
+ "patient_chas_type",
+ "smoker"
+)
+for (col in required_optional_columns) {
+ if (!col %in% names(data_clean)) {
+  data_clean[[col]] <- NA_character_
+ }
+}
+date_like_columns <- names(data_clean)[
+ stringr::str_detect(names(data_clean), "date") |
+  names(data_clean) %in% c("encounter_date", "enrolment_date", "de_enrolment_date")
+]
+for (column_name in date_like_columns) {
+ data_clean[[column_name]] <- parse_mixed_date(data_clean[[column_name]])
+}
+data_clean <- data_clean %>%
+ mutate(
+  patient = as.character(patient),
+  clinic = as.character(clinic),
+  c_year_of_birth_numeric = to_numeric_clean(c_year_of_birth),
+  encounter_month = lubridate::floor_date(encounter_date, unit = "month")
+ )
+data_dated <- data_clean %>%
+ filter(!is.na(encounter_date))
+data_study <- data_dated %>%
+ filter(
+  encounter_date >= STUDY_START_DATE,
+  encounter_date <= STUDY_END_DATE
+ )
+if (APPLY_ANALYTIC_DATE_WINDOW) {
+ data_window <- data_study %>%
+  filter(
+   encounter_date >= ANALYTIC_START_DATE,
+   encounter_date <= ANALYTIC_END_DATE
+  )
+} else {
+ data_window <- data_study
+}
+if (nrow(data_window) == 0) {
+ stop("No rows remain after date filtering.")
+}
+all_status_columns <- names(data_window)[
+ stringr::str_detect(names(data_window), "enrolment_status") |
+  stringr::str_detect(names(data_window), "enrollment_status")
+]
+static_status_columns <- all_status_columns[
+ stringr::str_detect(all_status_columns, "as_of|asof|31_dec|31dec")
+]
+timevarying_status_columns <- setdiff(all_status_columns, static_status_columns)
+general_screening_columns <- c(
+ "screening_screening_type",
+ "screening_test_order",
+ "screening_follow_up_outcome"
+)
+diabetes_complication_screening_columns <- c(
+ "clinical_indicators_dfs",
+ "clinical_indicators_dfs_service_provider",
+ "clinical_indicators_dfs_outcome",
+ "clinical_indicators_drp",
+ "clinical_indicators_drp_service_provider",
+ "clinical_indicators_drp_result",
+ "clinical_indicators_drp_followup",
+ "clinical_indicators_drp_other_findings"
+)
+vaccination_columns <- c(
+ "vaccination_vaccine_type",
+ "vaccination_product_name",
+ "vaccination_sdd",
+ "vaccination_covid_vaccination_dose_type",
+ "vaccination_covid_vaccination_conditions"
+)
+bmi_bp_smoking_columns <- c(
+ "visits_bmi_height",
+ "visits_bmi_weight",
+ "visits_bmi_weight_not_feasible",
+ "visits_bmi_waist_circumference",
+ "visits_bmi_bmi",
+ "visits_bmi_systolic_bp",
+ "visits_bmi_diastolic_bp",
+ "visits_bmi_smoking_assessment"
+)
+laboratory_monitoring_columns <- c(
+ "clinical_indicators_hb_a1c",
+ "clinical_indicators_ldl_c",
+ "clinical_indicators_fpg",
+ "clinical_indicators_ogtt",
+ "clinical_indicators_serum_creatinine",
+ "clinical_indicators_e_gfr",
+ "clinical_indicators_u_acr",
+ "clinical_indicators_u_pcr",
+ "clinical_indicators_hdl_c",
+ "clinical_indicators_triglycerides",
+ "clinical_indicators_total_cholesterol",
+ "clinical_indicators_serum_uric_acid"
+)
+respiratory_assessment_columns <- c(
+ "clinical_indicators_spirometry_date_done",
+ "clinical_indicators_asthma_control_test_act",
+ "clinical_indicators_gina_assessment_of_symptom_control"
+)
+chronic_condition_columns <- c(
+ "diabetes",
+ "pre_diabetes",
+ "hypertension",
+ "lipid_disorder",
+ "asthma",
+ "copd",
+ "nephritis_nephrosis",
+ "chronic_kidney_disease",
+ "ckd",
+ "ischaemic_heart_disease",
+ "ischemic_heart_disease",
+ "ihd",
+ "stroke",
+ "dementia",
+ "osteoarthritis",
+ "parkinsons_disease",
+ "benign_prostatic_hyperplasia",
+ "epilepsy",
+ "osteoporosis",
+ "psoriasis",
+ "rheumatoid_arthritis",
+ "schizophrenia",
+ "major_depression",
+ "bipolar_disorder",
+ "anxiety",
+ "allergic_rhinitis",
+ "gout",
+ "chronic_hepatitis_b"
+)
+all_service_columns <- unique(c(
+ general_screening_columns,
+ diabetes_complication_screening_columns,
+ vaccination_columns,
+ bmi_bp_smoking_columns,
+ laboratory_monitoring_columns,
+ respiratory_assessment_columns
+))
+for (col in unique(c(chronic_condition_columns, all_service_columns))) {
+ if (!col %in% names(data_window)) {
+  data_window[[col]] <- NA_character_
+ }
+}
+data_window <- data_window %>%
+ mutate(
+  encounter_kind_clean = stringr::str_to_lower(stringr::str_squish(as.character(encounter_kind))),
+  encounter_kind_clean = ifelse(is.na(encounter_kind_clean), "", encounter_kind_clean),
+  row_kind_deenrolment = stringr::str_detect(
+   encounter_kind_clean,
+   "de.?enrol|de.?enroll|withdraw|withdrawn|terminated|ceased"
+  ),
+  row_kind_enrolment = stringr::str_detect(
+   encounter_kind_clean,
+   "enrol|enroll"
+  ) & !row_kind_deenrolment,
+  row_enrolled_status = row_any_enrolled_status(., timevarying_status_columns),
+  row_deenrolled_status = row_any_deenrolled_status(., timevarying_status_columns),
+  row_annual_health_plan = to_yes_no_bool(annual_health_plan),
+  row_any_bmi_bp_smoking = row_any_present(., bmi_bp_smoking_columns),
+  row_any_general_screening = row_any_present(., general_screening_columns),
+  row_any_laboratory_monitoring = row_any_present(., laboratory_monitoring_columns),
+  row_any_dfs = row_any_present(
+   .,
+   c(
+    "clinical_indicators_dfs",
+    "clinical_indicators_dfs_service_provider",
+    "clinical_indicators_dfs_outcome"
+   )
+  ),
+  row_any_drp = row_any_present(
+   .,
+   c(
+    "clinical_indicators_drp",
+    "clinical_indicators_drp_service_provider",
+    "clinical_indicators_drp_result",
+    "clinical_indicators_drp_followup",
+    "clinical_indicators_drp_other_findings"
+   )
+  ),
+  row_any_diabetes_complication_screening = row_any_dfs | row_any_drp,
+  row_any_respiratory_assessment = row_any_present(., respiratory_assessment_columns),
+  row_influenza_pneumococcal_vaccination = row_any_vaccination_code(
+   data = .,
+   candidate_columns = vaccination_columns,
+   included_codes = VACCINATION_INCLUDED_CODES
+  )
+ )
+for (cc in chronic_condition_columns) {
+ flag_col <- paste0("row_", cc, "_flag")
+ data_window[[flag_col]] <- to_condition_bool(data_window[[cc]])
+}
+chronic_flag_columns <- paste0("row_", chronic_condition_columns, "_flag")
+patient_level_all <- data_window %>%
+ group_by(patient) %>%
+ summarise(
+  clinic = mode_present_value(clinic),
+  first_encounter_date = safe_min_date(encounter_date),
+  last_encounter_date = safe_max_date(encounter_date),
+  n_encounter_rows = n(),
+  n_unique_encounter_dates = dplyr::n_distinct(encounter_date[!is.na(encounter_date)]),
+  raw_first_enrolment_date_from_field = safe_min_date(enrolment_date),
+  raw_first_enrolment_date_from_status = safe_min_date(encounter_date[row_enrolled_status]),
+  raw_first_enrolment_date_from_kind = safe_min_date(encounter_date[row_kind_enrolment]),
+  raw_first_enrolment_date_from_ahp = safe_min_date(encounter_date[row_annual_health_plan]),
+  first_deenrolment_date_from_field = safe_min_date(de_enrolment_date),
+  first_deenrolment_date_from_status = safe_min_date(encounter_date[row_deenrolled_status]),
+  first_deenrolment_date_from_kind = safe_min_date(encounter_date[row_kind_deenrolment]),
+  c_year_of_birth_numeric = suppressWarnings(as.numeric(first_present_value(c_year_of_birth_numeric))),
+  citizenship_status = mode_present_value(citizenship_status),
+  gender = mode_present_value(gender),
+  ethnicity = mode_present_value(ethnicity),
+  patient_chas_type = mode_present_value(patient_chas_type),
+  smoker = mode_present_value(smoker),
+  across(all_of(chronic_flag_columns), ~ any(.x, na.rm = TRUE)),
+  .groups = "drop"
+ )
+names(patient_level_all) <- stringr::str_replace(
+ names(patient_level_all),
+ "^row_",
+ "patient_"
+)
+patient_level_all <- patient_level_all %>%
+ rowwise() %>%
+ mutate(
+  raw_first_enrolment_event_date = safe_min_date(
+   c(
+    raw_first_enrolment_date_from_field,
+    raw_first_enrolment_date_from_status,
+    raw_first_enrolment_date_from_kind,
+    if (USE_ANNUAL_HEALTH_PLAN_AS_ENROLMENT_EVIDENCE) {
+     raw_first_enrolment_date_from_ahp
+    } else {
+     as.Date(NA)
+    }
+   )
+  ),
+  first_deenrolment_event_date = safe_min_date(
+   c(
+    first_deenrolment_date_from_field,
+    first_deenrolment_date_from_status,
+    first_deenrolment_date_from_kind
+   )
+  )
+ ) %>%
+ ungroup() %>%
+ mutate(
+  hsg_pre_enrolment_needed =
+   !is.na(raw_first_enrolment_event_date) &
+   raw_first_enrolment_event_date < HSG_START_DATE &
+   !is.na(first_encounter_date) &
+   first_encounter_date < HSG_START_DATE,
+  first_hsg_pre_enrolment_event_date = dplyr::case_when(
+   hsg_pre_enrolment_needed ~ HSG_PRE_ENROLMENT_DATE,
+   TRUE ~ as.Date(NA)
+  ),
+  first_hsg_enrolment_event_date = dplyr::case_when(
+   !is.na(raw_first_enrolment_event_date) &
+    raw_first_enrolment_event_date >= HSG_START_DATE ~ raw_first_enrolment_event_date,
+   !is.na(raw_first_enrolment_event_date) &
+    raw_first_enrolment_event_date < HSG_START_DATE &
+    !is.na(first_encounter_date) &
+    first_encounter_date >= HSG_START_DATE ~ first_encounter_date,
+   TRUE ~ as.Date(NA)
+  )
+ ) %>%
+ rowwise() %>%
+ mutate(
+  first_valid_enrolment_reference_date = safe_min_date(
+   c(
+    first_hsg_pre_enrolment_event_date,
+    first_hsg_enrolment_event_date
+   )
+  )
+ ) %>%
+ ungroup() %>%
+ mutate(
+  hsg_enrolled = !is.na(first_valid_enrolment_reference_date),
+  hsg_deenrolled = !is.na(first_deenrolment_event_date),
+  age_reference_date = dplyr::case_when(
+   !is.na(first_encounter_date) & first_encounter_date < HSG_START_DATE ~ HSG_START_DATE,
+   !is.na(first_encounter_date) & first_encounter_date >= HSG_START_DATE ~ first_encounter_date,
+   TRUE ~ HSG_START_DATE
+  ),
+  age_at_reference = dplyr::if_else(
+   !is.na(c_year_of_birth_numeric),
+   lubridate::year(age_reference_date) - c_year_of_birth_numeric,
+   NA_real_
+  ),
+  age_eligible = dplyr::case_when(
+   is.na(age_at_reference) & KEEP_PATIENTS_WITH_MISSING_AGE ~ TRUE,
+   is.na(age_at_reference) & !KEEP_PATIENTS_WITH_MISSING_AGE ~ FALSE,
+   age_at_reference >= MINIMUM_AGE ~ TRUE,
+   TRUE ~ FALSE
+  ),
+  citizenship_eligible = eligible_citizenship(
+   citizenship_status,
+   keep_missing = KEEP_PATIENTS_WITH_MISSING_CITIZENSHIP
+  ),
+  citizenship_eligible = ifelse(APPLY_CITIZENSHIP_FILTER, citizenship_eligible, TRUE),
+  valid_deenrolment_sequence = dplyr::case_when(
+   !hsg_deenrolled ~ TRUE,
+   hsg_deenrolled & !hsg_enrolled ~ FALSE,
+   hsg_deenrolled &
+    hsg_enrolled &
+    ALLOW_SAME_DAY_ENROLMENT_AND_DEENROLMENT &
+    first_valid_enrolment_reference_date <= first_deenrolment_event_date ~ TRUE,
+   hsg_deenrolled &
+    hsg_enrolled &
+    !ALLOW_SAME_DAY_ENROLMENT_AND_DEENROLMENT &
+    first_valid_enrolment_reference_date < first_deenrolment_event_date ~ TRUE,
+   TRUE ~ FALSE
+  )
+ )
+patient_chronic_flag_columns <- names(patient_level_all)[
+ stringr::str_detect(names(patient_level_all), "^patient_") &
+  stringr::str_detect(names(patient_level_all), "_flag$")
+]
+patient_level_main <- patient_level_all %>%
+ filter(!is.na(first_encounter_date)) %>%
+ filter(if (APPLY_AGE_FILTER) age_eligible else TRUE) %>%
+ filter(citizenship_eligible) %>%
+ filter(valid_deenrolment_sequence) %>%
+ mutate(
+  population_short = dplyr::case_when(
+   !is.na(first_encounter_date) &
+    first_encounter_date < HSG_START_DATE &
+    hsg_enrolled &
+    !hsg_deenrolled ~ "Ia",
+   !is.na(first_encounter_date) &
+    first_encounter_date < HSG_START_DATE &
+    hsg_enrolled &
+    hsg_deenrolled ~ "Ib",
+   !is.na(first_encounter_date) &
+    first_encounter_date < HSG_START_DATE &
+    !hsg_enrolled ~ "II",
+   !is.na(first_encounter_date) &
+    first_encounter_date >= HSG_START_DATE &
+    hsg_enrolled ~ "III",
+   !is.na(first_encounter_date) &
+    first_encounter_date >= HSG_START_DATE &
+    !hsg_enrolled ~ "IV",
+   TRUE ~ "Unclassified"
+  )
+ ) %>%
+ filter(population_short %in% c("Ia", "Ib", "II", "III", "IV")) %>%
+ mutate(
+  gender_group = clean_gender_group(gender),
+  ethnicity_group = clean_ethnicity_group(ethnicity),
+  chas_group = clean_chas_group(patient_chas_type),
+  smoking_group = clean_smoking_group(smoker),
+  citizenship_group = clean_citizenship_group(citizenship_status),
+  patient_diabetes_flag = dplyr::coalesce(patient_diabetes_flag, FALSE),
+  patient_hypertension_flag = dplyr::coalesce(patient_hypertension_flag, FALSE),
+  patient_lipid_disorder_flag = dplyr::coalesce(patient_lipid_disorder_flag, FALSE),
+  patient_asthma_flag = dplyr::coalesce(patient_asthma_flag, FALSE),
+  patient_copd_flag = dplyr::coalesce(patient_copd_flag, FALSE),
+  patient_ischaemic_heart_disease_flag = dplyr::coalesce(patient_ischaemic_heart_disease_flag, FALSE),
+  patient_ischemic_heart_disease_flag = dplyr::coalesce(patient_ischemic_heart_disease_flag, FALSE),
+  patient_ihd_flag = dplyr::coalesce(patient_ihd_flag, FALSE),
+  patient_nephritis_nephrosis_flag = dplyr::coalesce(patient_nephritis_nephrosis_flag, FALSE),
+  patient_chronic_kidney_disease_flag = dplyr::coalesce(patient_chronic_kidney_disease_flag, FALSE),
+  patient_ckd_flag = dplyr::coalesce(patient_ckd_flag, FALSE),
+  patient_ihd_any_flag =
+   patient_ischaemic_heart_disease_flag |
+   patient_ischemic_heart_disease_flag |
+   patient_ihd_flag,
+  patient_kidney_disease_flag =
+   patient_nephritis_nephrosis_flag |
+   patient_chronic_kidney_disease_flag |
+   patient_ckd_flag
+ )
+patient_chronic_flag_columns <- names(patient_level_main)[
+ stringr::str_detect(names(patient_level_main), "^patient_") &
+  stringr::str_detect(names(patient_level_main), "_flag$")
+]
+patient_level_main <- patient_level_main %>%
+ mutate(
+  chronic_disease_count = rowSums(
+   as.data.frame(across(all_of(patient_chronic_flag_columns))),
+   na.rm = TRUE
+  ),
+  patient_vaccination_eligible_flag =
+   (!is.na(age_at_reference) & age_at_reference > VACCINE_AGE_THRESHOLD) |
+   patient_diabetes_flag |
+   patient_ihd_any_flag |
+   patient_asthma_flag |
+   patient_copd_flag,
+  patient_monitoring_eligible_flag =
+   patient_diabetes_flag |
+   patient_hypertension_flag |
+   patient_lipid_disorder_flag |
+   patient_ihd_any_flag |
+   patient_kidney_disease_flag,
+  patient_female_flag = gender_group == "Female"
+ )
+if (ITS_COMPARISON_MODE == "PRIMARY_POP_I_VS_II") {
+ patient_level_main <- patient_level_main %>%
+  mutate(
+   comparison_group = dplyr::case_when(
+    population_short %in% c("Ia", "Ib") ~ "HSG",
+    population_short == "II" ~ "Non-HSG",
+    TRUE ~ NA_character_
+   )
+  )
+} else if (ITS_COMPARISON_MODE == "ALL_HSG_VS_NONHSG") {
+ patient_level_main <- patient_level_main %>%
+  mutate(
+   comparison_group = dplyr::case_when(
+    population_short %in% c("Ia", "Ib", "III") ~ "HSG",
+    population_short %in% c("II", "IV") ~ "Non-HSG",
+    TRUE ~ NA_character_
+   )
+  )
+} else {
+ stop("ITS_COMPARISON_MODE must be 'PRIMARY_POP_I_VS_II' or 'ALL_HSG_VS_NONHSG'.")
+}
+patient_level_main <- patient_level_main %>%
+ filter(comparison_group %in% c("HSG", "Non-HSG")) %>%
+ mutate(
+  comparison_group = factor(comparison_group, levels = c("Non-HSG", "HSG")),
+  observation_start_date = dplyr::case_when(
+   !is.na(first_encounter_date) ~ pmax(first_encounter_date, STUDY_START_DATE),
+   TRUE ~ as.Date(NA)
+  ),
+  observation_end_date = dplyr::case_when(
+   !is.na(first_deenrolment_event_date) &
+    first_deenrolment_event_date <= STUDY_END_DATE ~ first_deenrolment_event_date,
+   TRUE ~ STUDY_END_DATE
+  )
+ ) %>%
+ filter(!is.na(observation_start_date), !is.na(observation_end_date)) %>%
+ filter(observation_end_date >= observation_start_date)
+if (nrow(patient_level_main) == 0) {
+ stop("No patients remain for the ITS comparison after eligibility and comparison-group filtering.")
+}
+patient_level_main <- patient_level_main %>%
+ mutate(
+  adj_age = age_at_reference,
+  adj_female = dplyr::case_when(
+   gender_group == "Female" ~ 1,
+   gender_group == "Male" ~ 0,
+   TRUE ~ NA_real_
+  ),
+  adj_ethnicity_non_chinese = dplyr::case_when(
+   ethnicity_group == "Unknown" ~ NA_real_,
+   ethnicity_group == "Chinese" ~ 0,
+   TRUE ~ 1
+  ),
+  adj_chas_blue_green = dplyr::case_when(
+   chas_group == "Unknown" ~ NA_real_,
+   chas_group %in% c("Blue", "Green") ~ 1,
+   TRUE ~ 0
+  ),
+  adj_current_smoker = dplyr::case_when(
+   smoking_group == "Unknown" ~ NA_real_,
+   smoking_group == "Current smoker" ~ 1,
+   TRUE ~ 0
+  ),
+  adj_chronic_disease_count = as.numeric(chronic_disease_count),
+  adj_diabetes = as.numeric(patient_diabetes_flag),
+  adj_hypertension = as.numeric(patient_hypertension_flag),
+  adj_lipid_disorder = as.numeric(patient_lipid_disorder_flag),
+  adj_asthma = as.numeric(patient_asthma_flag),
+  adj_copd = as.numeric(patient_copd_flag),
+  adj_ihd = as.numeric(patient_ihd_any_flag),
+  adj_kidney_disease = as.numeric(patient_kidney_disease_flag)
+ )
+covariate_specs <- tibble::tribble(
+ ~covariate,                   ~label,                              ~priority,
+ "adj_age",                    "Age",                               1L,
+ "adj_female",                 "Female sex",                        2L,
+ "adj_chas_blue_green",         "CHAS Blue/Green",                   3L,
+ "adj_chronic_disease_count",   "Number of chronic diseases",        4L,
+ "adj_current_smoker",          "Current smoker",                    5L,
+ "adj_ethnicity_non_chinese",   "Non-Chinese ethnicity",             6L,
+ "adj_diabetes",               "Diabetes",                          7L,
+ "adj_hypertension",           "Hypertension",                      8L,
+ "adj_lipid_disorder",          "Lipid disorder",                    9L,
+ "adj_asthma",                 "Asthma",                            10L,
+ "adj_copd",                   "COPD",                              11L,
+ "adj_ihd",                    "Ischaemic heart disease",           12L,
+ "adj_kidney_disease",          "Kidney disease / nephritis / CKD",  13L
+)
+baseline_missingness_table <- covariate_specs %>%
+ rowwise() %>%
+ mutate(
+  patient_level_missing_rate = mean(is.na(patient_level_main[[covariate]])),
+  patient_level_nonmissing_n = sum(!is.na(patient_level_main[[covariate]])),
+  patient_level_variance = suppressWarnings(stats::var(patient_level_main[[covariate]], na.rm = TRUE))
+ ) %>%
+ ungroup() %>%
+ mutate(
+  passes_patient_level_missingness =
+   patient_level_missing_rate <= COVARIATE_MISSINGNESS_THRESHOLD,
+  nonzero_patient_level_variance =
+   is.finite(patient_level_variance) &
+   !is.na(patient_level_variance) &
+   patient_level_variance > 0.0000000001
+ )
+safe_write_csv(
+ baseline_missingness_table,
+ file.path(TABLE_DIR, "ITS_baseline_covariate_missingness_patient_level.csv")
+)
+patient_static_columns <- c(
+ "comparison_group",
+ "population_short",
+ "clinic",
+ "first_encounter_date",
+ "last_encounter_date",
+ "first_valid_enrolment_reference_date",
+ "first_deenrolment_event_date",
+ "observation_start_date",
+ "observation_end_date",
+ "age_at_reference",
+ "gender_group",
+ "ethnicity_group",
+ "chas_group",
+ "smoking_group",
+ "citizenship_group",
+ "patient_diabetes_flag",
+ "patient_hypertension_flag",
+ "patient_lipid_disorder_flag",
+ "patient_asthma_flag",
+ "patient_copd_flag",
+ "patient_ihd_any_flag",
+ "patient_kidney_disease_flag",
+ "patient_vaccination_eligible_flag",
+ "patient_monitoring_eligible_flag",
+ "patient_female_flag",
+ "chronic_disease_count",
+ covariate_specs$covariate
+)
+patient_static_columns <- unique(patient_static_columns)
+missing_patient_static_columns <- setdiff(patient_static_columns, names(patient_level_main))
+if (length(missing_patient_static_columns) > 0) {
+}
+patient_static_columns <- intersect(patient_static_columns, names(patient_level_main))
+patient_static_columns_no_patient <- setdiff(patient_static_columns, "patient")
+encounter_columns_to_remove_before_join <- intersect(
+ patient_static_columns_no_patient,
+ names(data_window)
+)
+data_observed <- data_window %>%
+ dplyr::semi_join(
+  patient_level_main %>%
+   dplyr::select(patient),
+  by = "patient"
+ ) %>%
+ dplyr::select(
+  -tidyselect::any_of(encounter_columns_to_remove_before_join)
+ ) %>%
+ dplyr::left_join(
+  patient_level_main %>%
+   dplyr::select(
+    patient,
+    tidyselect::all_of(patient_static_columns_no_patient)
+   ),
+  by = "patient"
+ ) %>%
+ dplyr::filter(
+  !is.na(observation_start_date),
+  !is.na(observation_end_date),
+  encounter_date >= observation_start_date,
+  encounter_date <= observation_end_date
+ )
+if (nrow(data_observed) == 0) {
+ stop("No encounter rows remain after applying patient observation windows and de-enrolment censoring.")
+}
+missing_after_join <- setdiff(patient_static_columns_no_patient, names(data_observed))
+if (length(missing_after_join) > 0) {
+ stop(
+  "The following patient-static columns are still missing after the join: ",
+  paste(missing_after_join, collapse = ", ")
+ )
+}
+patient_date_encounters <- data_observed %>%
+ dplyr::group_by(patient, encounter_date) %>%
+ dplyr::summarise(
+  encounter_month = lubridate::floor_date(dplyr::first(encounter_date), unit = "month"),
+  dplyr::across(
+   .cols = tidyselect::all_of(patient_static_columns_no_patient),
+   .fns = ~ dplyr::first(.x)
+  ),
+  proc_bmi_bp_smoking = any(row_any_bmi_bp_smoking, na.rm = TRUE),
+  proc_screening = any(row_any_general_screening, na.rm = TRUE),
+  proc_lab_monitoring = any(row_any_laboratory_monitoring, na.rm = TRUE),
+  proc_drp_dfs = any(row_any_diabetes_complication_screening, na.rm = TRUE),
+  proc_respi_assessment = any(row_any_respiratory_assessment, na.rm = TRUE),
+  proc_vaccination = any(row_influenza_pneumococcal_vaccination, na.rm = TRUE),
+  .groups = "drop"
+ ) %>%
+ dplyr::mutate(
+  denom_all = TRUE,
+  denom_monitoring = patient_monitoring_eligible_flag,
+  denom_diabetes = patient_diabetes_flag,
+  denom_asthma = patient_asthma_flag,
+  denom_vaccination = patient_vaccination_eligible_flag
+ )
+safe_write_csv(
+ patient_level_main,
+ file.path(MODEL_DIR, "ITS_patient_level_main_with_population_and_censoring.csv")
+)
+safe_write_csv(
+ patient_date_encounters,
+ file.path(MODEL_DIR, "ITS_patient_date_encounters_after_deenrolment_censoring.csv")
+)
+process_definitions <- tibble::tribble(
+ ~process_id,           ~process_label,                       ~numerator_col,             ~denominator_col,     ~denominator_description,                                                                                   ~numerator_description,
+ "bmi_bp_smoking",      "BMI / BP / smoking assessment",       "proc_bmi_bp_smoking",      "denom_all",          "All eligible unique patient-date encounters",                                                               "At least one BMI, weight, height, waist circumference, BP, or smoking-assessment field recorded",
+ "screening",           "Screening",                           "proc_screening",           "denom_all",          "All eligible unique patient-date encounters",                                                               "At least one general screening field recorded: screening type, test order, or follow-up outcome",
+ "lab_monitoring",      "Laboratory monitoring",               "proc_lab_monitoring",      "denom_monitoring",   "Unique patient-date encounters from patients with DM, HTN, HLD, IHD, CKD, or nephritis/nephrosis",            "At least one laboratory monitoring field recorded: HbA1c, lipid, glucose, renal, urine ACR/PCR, or uric acid",
+ "drp_dfs",             "Diabetic retinal / foot screening",    "proc_drp_dfs",             "denom_diabetes",     "Unique patient-date encounters from patients with diabetes",                                                 "At least one DRP or DFS field recorded",
+ "respi_assessment",    "Respiratory assessment",               "proc_respi_assessment",    "denom_asthma",       "Unique patient-date encounters from patients with asthma",                                                   "At least one spirometry, asthma control test, or GINA assessment field recorded",
+ "vaccination",         "Influenza / pneumococcal vaccination", "proc_vaccination",         "denom_vaccination",  "Unique patient-date encounters from vaccine-eligible patients: age >65, DM, IHD, asthma, or COPD",            "Influenza or pneumococcal vaccination code recorded: A-INF, A-PCV, A-PCV20, A-PPSV, or A-PNC"
+)
+safe_write_csv(
+ process_definitions,
+ file.path(TABLE_DIR, "ITS_process_definitions_and_denominators.csv")
+)
+make_time_variables <- function(df) {
+ start_month <- lubridate::floor_date(STUDY_START_DATE, unit = "month")
+ hsg_start_month <- lubridate::floor_date(HSG_START_DATE, unit = "month")
+ intervention_index <- lubridate::interval(start_month, hsg_start_month) %/% months(1)
+ df %>%
+  mutate(
+   month_index = month_index_between(start_month, encounter_month),
+   time = as.numeric(month_index),
+   post = as.integer(encounter_month >= hsg_start_month),
+   time_after = dplyr::if_else(
+    post == 1L,
+    as.numeric(month_index - intervention_index),
+    0
+   )
+  )
+}
+select_adjustment_covariates_for_process <- function(denominator_df, process_id) {
+ covariate_table <- covariate_specs %>%
+  rowwise() %>%
+  mutate(
+   denominator_missing_rate = ifelse(
+    nrow(denominator_df) == 0,
+    NA_real_,
+    mean(is.na(denominator_df[[covariate]]))
+   ),
+   denominator_nonmissing_n = ifelse(
+    nrow(denominator_df) == 0,
+    0L,
+    sum(!is.na(denominator_df[[covariate]]))
+   ),
+   denominator_variance = ifelse(
+    nrow(denominator_df) == 0,
+    NA_real_,
+    suppressWarnings(stats::var(denominator_df[[covariate]], na.rm = TRUE))
+   )
+  ) %>%
+  ungroup() %>%
+  mutate(
+   process_id = process_id,
+   passes_missingness =
+    !is.na(denominator_missing_rate) &
+    denominator_missing_rate <= COVARIATE_MISSINGNESS_THRESHOLD,
+   passes_variance =
+    is.finite(denominator_variance) &
+    !is.na(denominator_variance) &
+    denominator_variance > 0.0000000001,
+   selected_for_adjustment =
+    passes_missingness &
+    passes_variance
+  ) %>%
+  arrange(priority)
+ selected <- covariate_table %>%
+  filter(selected_for_adjustment) %>%
+  arrange(priority) %>%
+  slice_head(n = MAX_ADJUSTMENT_COVARIATES) %>%
+  pull(covariate)
+ list(
+  selected_covariates = selected,
+  covariate_table = covariate_table
+ )
+}
+make_monthly_process_summary <- function(process_row, selected_covariates) {
+ numerator_col <- process_row$numerator_col
+ denominator_col <- process_row$denominator_col
+ all_months <- tibble::tibble(
+  encounter_month = seq.Date(
+   from = lubridate::floor_date(STUDY_START_DATE, unit = "month"),
+   to = lubridate::floor_date(STUDY_END_DATE, unit = "month"),
+   by = "month"
+  )
+ )
+ all_groups <- tibble::tibble(
+  comparison_group = factor(c("Non-HSG", "HSG"), levels = c("Non-HSG", "HSG"))
+ )
+ denominator_df <- patient_date_encounters %>%
+  filter(.data[[denominator_col]])
+ if (length(selected_covariates) > 0) {
+  monthly_summary <- denominator_df %>%
+   group_by(comparison_group, encounter_month) %>%
+   summarise(
+    denominator = n(),
+    numerator = sum(.data[[numerator_col]], na.rm = TRUE),
+    across(all_of(selected_covariates), ~ mean_or_na(.x)),
+    .groups = "drop"
+   )
+ } else {
+  monthly_summary <- denominator_df %>%
+   group_by(comparison_group, encounter_month) %>%
+   summarise(
+    denominator = n(),
+    numerator = sum(.data[[numerator_col]], na.rm = TRUE),
+    .groups = "drop"
+   )
+ }
+ monthly_summary <- tidyr::crossing(all_groups, all_months) %>%
+  left_join(monthly_summary, by = c("comparison_group", "encounter_month")) %>%
+  mutate(
+   denominator = tidyr::replace_na(denominator, 0L),
+   numerator = tidyr::replace_na(numerator, 0L),
+   rate_percent = dplyr::if_else(
+    denominator > 0,
+    100 * numerator / denominator,
+    NA_real_
+   ),
+   model_eligible_month = denominator >= MIN_DENOMINATOR_PER_MONTH,
+   process_id = process_row$process_id,
+   process_label = process_row$process_label,
+   numerator_col = numerator_col,
+   denominator_col = denominator_col,
+   denominator_description = process_row$denominator_description,
+   numerator_description = process_row$numerator_description
+  ) %>%
+  make_time_variables()
+ monthly_summary
+}
+make_difference_monthly_data <- function(monthly_summary, selected_covariates) {
+ base_cols <- c(
+  "encounter_month",
+  "month_index",
+  "time",
+  "post",
+  "time_after",
+  "denominator",
+  "numerator",
+  "rate_percent"
+ )
+ hsg_cols <- c(base_cols, selected_covariates)
+ hsg_cols <- hsg_cols[hsg_cols %in% names(monthly_summary)]
+ nonhsg_cols <- hsg_cols
+ hsg <- monthly_summary %>%
+  filter(comparison_group == "HSG") %>%
+  select(all_of(hsg_cols))
+ hsg_rename_cols <- setdiff(names(hsg), c("encounter_month", "month_index", "time", "post", "time_after"))
+ hsg <- hsg %>%
+  rename_with(
+   .fn = ~ paste0(.x, "_hsg"),
+   .cols = all_of(hsg_rename_cols)
+  )
+ nonhsg <- monthly_summary %>%
+  filter(comparison_group == "Non-HSG") %>%
+  select(all_of(nonhsg_cols))
+ nonhsg_rename_cols <- setdiff(names(nonhsg), c("encounter_month", "month_index", "time", "post", "time_after"))
+ nonhsg <- nonhsg %>%
+  rename_with(
+   .fn = ~ paste0(.x, "_nonhsg"),
+   .cols = all_of(nonhsg_rename_cols)
+  )
+ diff_df <- hsg %>%
+  inner_join(
+   nonhsg,
+   by = c("encounter_month", "month_index", "time", "post", "time_after")
+  ) %>%
+  mutate(
+   rate_difference_pp = rate_percent_hsg - rate_percent_nonhsg,
+   p_hsg = (numerator_hsg + 0.5) / (denominator_hsg + 1),
+   p_nonhsg = (numerator_nonhsg + 0.5) / (denominator_nonhsg + 1),
+   var_hsg_pp = 10000 * p_hsg * (1 - p_hsg) / pmax(denominator_hsg + 1, 1),
+   var_nonhsg_pp = 10000 * p_nonhsg * (1 - p_nonhsg) / pmax(denominator_nonhsg + 1, 1),
+   diff_variance_pp = var_hsg_pp + var_nonhsg_pp,
+   diff_weight = 1 / pmax(diff_variance_pp, 0.000001),
+   model_eligible_month =
+    denominator_hsg >= MIN_DENOMINATOR_PER_MONTH &
+    denominator_nonhsg >= MIN_DENOMINATOR_PER_MONTH
+  )
+ diff_covariates <- character(0)
+ if (length(selected_covariates) > 0) {
+  for (covariate in selected_covariates) {
+   hsg_cov <- paste0(covariate, "_hsg")
+   nonhsg_cov <- paste0(covariate, "_nonhsg")
+   diff_cov <- paste0("diff_", covariate)
+   if (hsg_cov %in% names(diff_df) && nonhsg_cov %in% names(diff_df)) {
+    diff_df[[diff_cov]] <- diff_df[[hsg_cov]] - diff_df[[nonhsg_cov]]
+    diff_covariates <- c(diff_covariates, diff_cov)
+   }
+  }
+ }
+ list(
+  diff_df = diff_df,
+  diff_covariates = diff_covariates
+ )
+}
+if (!requireNamespace("patchwork", quietly = TRUE)) {
+ install.packages("patchwork", dependencies = TRUE)
+}
+library(patchwork)
+ITS_TOP_PANEL_STORE <- new.env(parent = emptyenv())
+OLD_PANEL_HEIGHT_TO_WIDTH <- 2.26 / 3.70
+COMBINED_HEIGHT_TO_WIDTH <- 2 * OLD_PANEL_HEIGHT_TO_WIDTH
+COMBINED_FIGURE_WIDTH <- FIGURE_WIDTH
+COMBINED_FIGURE_HEIGHT <- FIGURE_WIDTH * COMBINED_HEIGHT_TO_WIDTH
+ITS_BASE_SIZE <- 30
+ITS_POINT_SIZE <- 3.0
+ITS_LINEWIDTH <- 1.30
+ITS_COUNTERFACTUAL_LINEWIDTH <- 1.20
+ITS_RIBBON_ALPHA <- 0.16
+ITS_CONTROLLED_RIBBON_ALPHA <- 0.20
+ITS_AXIS_LINEWIDTH <- 0.75
+ITS_AXIS_TICK_LINEWIDTH <- 0.75
+ITS_VLINE_WIDTH <- 0.95
+ITS_ZERO_LINE_WIDTH <- 0.75
+make_monthly_breaks <- function() {
+ seq.Date(
+  from = lubridate::floor_date(STUDY_START_DATE, unit = "month"),
+  to = lubridate::floor_date(STUDY_END_DATE, unit = "month"),
+  by = "1 month"
+ )
+}
+label_every_6_months_two_rows <- function(x) {
+ x_date <- as.Date(x)
+ out <- rep("", length(x_date))
+ jan_idx <- lubridate::month(x_date) == 1
+ jul_idx <- lubridate::month(x_date) == 7
+ out[jan_idx] <- paste0("Jan\n", lubridate::year(x_date[jan_idx]))
+ out[jul_idx] <- paste0("July\n", lubridate::year(x_date[jul_idx]))
+ out
+}
+blank_date_labels <- function(x) {
+ rep("", length(x))
+}
+theme_its <- function(base_size = ITS_BASE_SIZE) {
+ ggplot2::theme_minimal(base_size = base_size) +
+  ggplot2::theme(
+   text = ggplot2::element_text(
+    family = "sans",
+    colour = "#111111",
+    size = base_size,
+    face = "plain"
+   ),
+   plot.title = ggplot2::element_text(
+    size = base_size,
+    face = "plain",
+    hjust = 0.5,
+    margin = ggplot2::margin(b = 8)
+   ),
+   plot.subtitle = ggplot2::element_blank(),
+   plot.caption = ggplot2::element_blank(),
+   axis.title.x = ggplot2::element_blank(),
+   axis.title.y = ggplot2::element_text(
+    size = base_size,
+    face = "plain",
+    margin = ggplot2::margin(r = 10)
+   ),
+   axis.text.x = ggplot2::element_text(
+    size = base_size,
+    face = "plain",
+    colour = "#222222",
+    margin = ggplot2::margin(t = 8)
+   ),
+   axis.text.y = ggplot2::element_text(
+    size = base_size,
+    face = "plain",
+    colour = "#222222",
+    margin = ggplot2::margin(r = 6)
+   ),
+   axis.line.x = ggplot2::element_line(
+    colour = "#333333",
+    linewidth = ITS_AXIS_LINEWIDTH
+   ),
+   axis.line.y = ggplot2::element_line(
+    colour = "#333333",
+    linewidth = ITS_AXIS_LINEWIDTH
+   ),
+   axis.ticks.x = ggplot2::element_line(
+    colour = "#333333",
+    linewidth = ITS_AXIS_TICK_LINEWIDTH
+   ),
+   axis.ticks.y = ggplot2::element_line(
+    colour = "#333333",
+    linewidth = ITS_AXIS_TICK_LINEWIDTH
+   ),
+   axis.ticks.length.x = grid::unit(7, "pt"),
+   axis.ticks.length.y = grid::unit(5.5, "pt"),
+   panel.grid.major.x = ggplot2::element_blank(),
+   panel.grid.major.y = ggplot2::element_blank(),
+   panel.grid.minor = ggplot2::element_blank(),
+   legend.position = "none",
+   plot.margin = ggplot2::margin(
+    t = 10,
+    r = 12,
+    b = 10,
+    l = 10
+   )
+  )
+}
+plot_group_its <- function(process_row, monthly_summary, prediction_table) {
+ process_id <- process_row$process_id
+ process_label <- process_row$process_label
+ observed_df <- monthly_summary %>%
+  dplyr::mutate(
+   comparison_group = factor(
+    as.character(comparison_group),
+    levels = c("HSG", "Non-HSG")
+   ),
+   point_alpha = ifelse(model_eligible_month, 0.95, 0.35)
+  )
+ pred_df <- prediction_table %>%
+  dplyr::mutate(
+   comparison_group = factor(
+    as.character(comparison_group),
+    levels = c("HSG", "Non-HSG")
+   )
+  )
+ pred_hsg_counterfactual <- pred_df %>%
+  dplyr::filter(
+   comparison_group == "HSG",
+   post == 1
+  )
+ pred_nonhsg_counterfactual <- pred_df %>%
+  dplyr::filter(
+   comparison_group == "Non-HSG",
+   post == 1
+  )
+ y_values <- c(
+  observed_df$rate_percent,
+  pred_df$fitted,
+  pred_df$counterfactual
+ )
+ y_top <- min(100, choose_axis_top(y_values, allow_negative = FALSE))
+ group_dark_colours <- c(
+  "HSG" = COLOUR_HSG_DARK,
+  "Non-HSG" = COLOUR_NONHSG_DARK
+ )
+ group_light_fills <- c(
+  "HSG" = COLOUR_HSG_LIGHT,
+  "Non-HSG" = COLOUR_NONHSG_LIGHT
+ )
+ p_top <- ggplot() +
+  geom_vline(
+   xintercept = HSG_START_DATE,
+   linetype = "dashed",
+   linewidth = ITS_VLINE_WIDTH,
+   colour = "#333333"
+  ) +
+  geom_ribbon(
+   data = pred_df,
+   aes(
+    x = encounter_month,
+    ymin = fitted_low_plot,
+    ymax = fitted_high_plot,
+    fill = comparison_group
+   ),
+   alpha = ITS_RIBBON_ALPHA,
+   colour = NA,
+   show.legend = FALSE
+  ) +
+  geom_point(
+   data = observed_df %>%
+    dplyr::filter(denominator > 0),
+   aes(
+    x = encounter_month,
+    y = rate_percent,
+    colour = comparison_group,
+    alpha = point_alpha
+   ),
+   size = ITS_POINT_SIZE,
+   show.legend = FALSE
+  ) +
+  geom_line(
+   data = pred_df,
+   aes(
+    x = encounter_month,
+    y = fitted_plot,
+    colour = comparison_group
+   ),
+   linewidth = ITS_LINEWIDTH,
+   show.legend = FALSE
+  ) +
+  geom_line(
+   data = pred_hsg_counterfactual,
+   aes(
+    x = encounter_month,
+    y = counterfactual_plot
+   ),
+   colour = COLOUR_HSG_LIGHT,
+   linewidth = ITS_COUNTERFACTUAL_LINEWIDTH,
+   linetype = "longdash",
+   show.legend = FALSE
+  ) +
+  geom_line(
+   data = pred_nonhsg_counterfactual,
+   aes(
+    x = encounter_month,
+    y = counterfactual_plot
+   ),
+   colour = COLOUR_NONHSG_LIGHT,
+   linewidth = ITS_COUNTERFACTUAL_LINEWIDTH,
+   linetype = "longdash",
+   show.legend = FALSE
+  ) +
+  scale_colour_manual(
+   values = group_dark_colours,
+   breaks = c("HSG", "Non-HSG"),
+   drop = FALSE,
+   guide = "none"
+  ) +
+  scale_fill_manual(
+   values = group_light_fills,
+   breaks = c("HSG", "Non-HSG"),
+   drop = FALSE,
+   guide = "none"
+  ) +
+  scale_alpha_identity(guide = "none") +
+  scale_x_date(
+   limits = c(
+    lubridate::floor_date(STUDY_START_DATE, unit = "month"),
+    lubridate::floor_date(STUDY_END_DATE, unit = "month")
+   ),
+   breaks = make_monthly_breaks(),
+   labels = blank_date_labels,
+   expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(
+   limits = c(0, y_top),
+   labels = function(x) paste0(x, "%"),
+   expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+   title = paste0(process_label, " rate"),
+   x = NULL,
+   y = "Monthly encounter rate (%)"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_its(base_size = ITS_BASE_SIZE) +
+  theme(
+   legend.position = "none",
+   axis.text.x = element_blank(),
+   axis.ticks.x = element_line(
+    colour = "#333333",
+    linewidth = ITS_AXIS_TICK_LINEWIDTH
+   ),
+   plot.margin = ggplot2::margin(
+    t = 10,
+    r = 12,
+    b = 18,
+    l = 10
+   )
+  ) +
+  guides(
+   colour = "none",
+   fill = "none",
+   alpha = "none"
+  )
+ assign(
+  x = process_id,
+  value = p_top,
+  envir = ITS_TOP_PANEL_STORE
+ )
+ invisible(p_top)
+}
+plot_difference_its <- function(process_row, diff_df, diff_prediction_table) {
+ process_id <- process_row$process_id
+ observed_df <- diff_df %>%
+  dplyr::mutate(
+   point_alpha = ifelse(model_eligible_month, 0.95, 0.35)
+  )
+ pred_df <- diff_prediction_table
+ y_values <- c(
+  observed_df$rate_difference_pp,
+  pred_df$fitted,
+  pred_df$counterfactual
+ )
+ y_min <- min(y_values, na.rm = TRUE)
+ y_max <- max(y_values, na.rm = TRUE)
+ y_abs <- max(abs(c(y_min, y_max)), na.rm = TRUE)
+ y_abs_top <- choose_axis_top(y_abs, allow_negative = FALSE)
+ p_bottom <- ggplot() +
+  geom_hline(
+   yintercept = 0,
+   linewidth = ITS_ZERO_LINE_WIDTH,
+   colour = "#777777"
+  ) +
+  geom_vline(
+   xintercept = HSG_START_DATE,
+   linetype = "dashed",
+   linewidth = ITS_VLINE_WIDTH,
+   colour = "#333333"
+  ) +
+  geom_ribbon(
+   data = pred_df,
+   aes(
+    x = encounter_month,
+    ymin = fitted_low,
+    ymax = fitted_high
+   ),
+   fill = COLOUR_HSG_LIGHT,
+   alpha = ITS_CONTROLLED_RIBBON_ALPHA,
+   colour = NA,
+   show.legend = FALSE
+  ) +
+  geom_point(
+   data = observed_df,
+   aes(
+    x = encounter_month,
+    y = rate_difference_pp,
+    alpha = point_alpha
+   ),
+   size = ITS_POINT_SIZE + 0.1,
+   colour = COLOUR_HSG_DARK,
+   show.legend = FALSE
+  ) +
+  geom_line(
+   data = pred_df,
+   aes(
+    x = encounter_month,
+    y = fitted
+   ),
+   linewidth = ITS_LINEWIDTH,
+   colour = COLOUR_HSG_DARK,
+   show.legend = FALSE
+  ) +
+  geom_line(
+   data = pred_df %>%
+    dplyr::filter(post == 1),
+   aes(
+    x = encounter_month,
+    y = counterfactual
+   ),
+   linewidth = ITS_COUNTERFACTUAL_LINEWIDTH,
+   colour = COLOUR_COUNTERFACTUAL,
+   linetype = "longdash",
+   show.legend = FALSE
+  ) +
+  scale_alpha_identity(guide = "none") +
+  scale_x_date(
+   limits = c(
+    lubridate::floor_date(STUDY_START_DATE, unit = "month"),
+    lubridate::floor_date(STUDY_END_DATE, unit = "month")
+   ),
+   breaks = make_monthly_breaks(),
+   labels = label_every_6_months_two_rows,
+   expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(
+   limits = c(-y_abs_top, y_abs_top),
+   labels = function(x) paste0(x, "%"),
+   expand = expansion(mult = c(0.02, 0.05))
+  ) +
+  labs(
+   x = NULL,
+   y = expression(Delta~"(%)")
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_its(base_size = ITS_BASE_SIZE) +
+  theme(
+   legend.position = "none",
+   plot.margin = ggplot2::margin(
+    t = 18,
+    r = 12,
+    b = 10,
+    l = 10
+   )
+  ) +
+  guides(
+   colour = "none",
+   fill = "none",
+   alpha = "none"
+  )
+ if (exists(process_id, envir = ITS_TOP_PANEL_STORE, inherits = FALSE)) {
+  p_top <- get(process_id, envir = ITS_TOP_PANEL_STORE, inherits = FALSE)
+  p_combined <- p_top / p_bottom +
+   patchwork::plot_layout(
+    ncol = 1,
+    heights = c(1, 1)
+   )
+ } else {
+  warning(
+   "Top ITS panel not found for process_id = ",
+   process_id,
+   ". Saving controlled-difference panel only."
+  )
+  p_combined <- p_bottom
+ }
+ filename_stub <- paste0(
+  "ITS_",
+  process_id,
+  "_combined_overlay_and_controlled_difference_",
+  make_slug(ITS_COMPARISON_MODE)
+ )
+ save_plot_all_formats(
+  plot_object = p_combined,
+  filename_stub = filename_stub,
+  width = COMBINED_FIGURE_WIDTH,
+  height = COMBINED_FIGURE_HEIGHT,
+  dpi = FIGURE_DPI
+ )
+ p_combined
+}
+all_results <- list()
+all_covariate_selection_tables <- list()
+all_monthly_summaries <- list()
+all_group_predictions <- list()
+all_difference_predictions <- list()
+all_difference_monthly <- list()
+cohort_summary <- patient_level_main %>%
+ count(comparison_group, population_short, name = "patients") %>%
+ arrange(comparison_group, population_short)
+print(cohort_summary)
+for (i in seq_len(nrow(process_definitions))) {
+ process_row <- process_definitions[i, ]
+ process_id <- process_row$process_id
+ process_label <- process_row$process_label
+ numerator_col <- process_row$numerator_col
+ denominator_col <- process_row$denominator_col
+ denominator_df <- patient_date_encounters %>%
+  filter(.data[[denominator_col]])
+ covariate_selection <- select_adjustment_covariates_for_process(
+  denominator_df = denominator_df,
+  process_id = process_id
+ )
+ selected_covariates <- covariate_selection$selected_covariates
+ covariate_table_process <- covariate_selection$covariate_table %>%
+  mutate(
+   selected_final = covariate %in% selected_covariates
+  )
+ all_covariate_selection_tables[[process_id]] <- covariate_table_process
+ if (length(selected_covariates) == 0) {
+ } else {
+  selected_covariate_labels <- covariate_specs %>%
+   filter(covariate %in% selected_covariates) %>%
+   arrange(match(covariate, selected_covariates)) %>%
+   mutate(display = paste0("  - ", label, " [", covariate, "]")) %>%
+   pull(display)
+ }
+ monthly_summary <- make_monthly_process_summary(
+  process_row = process_row,
+  selected_covariates = selected_covariates
+ )
+ all_monthly_summaries[[process_id]] <- monthly_summary
+ safe_write_csv(
+  monthly_summary,
+  file.path(MODEL_DIR, paste0("ITS_", process_id, "_monthly_summary.csv"))
+ )
+ group_fit_results <- list()
+ group_prediction_tables <- list()
+ for (this_group in c("HSG", "Non-HSG")) {
+  group_model_df <- monthly_summary %>%
+   filter(
+    comparison_group == this_group,
+    model_eligible_month
+   ) %>%
+   arrange(encounter_month)
+  group_covariates <- filter_model_covariates(
+   model_df = group_model_df,
+   candidate_terms = selected_covariates
+  )
+  group_fit <- fit_wls_newey(
+   model_df = group_model_df,
+   outcome_col = "rate_percent",
+   weight_col = "denominator",
+   covariate_terms = group_covariates,
+   model_label = paste0(process_id, "_", this_group)
+  )
+  group_results <- make_level_slope_results(
+   fit_obj = group_fit,
+   process_id = process_id,
+   process_label = process_label,
+   model_type = "Group-specific ITS",
+   comparison_label = this_group,
+   denominator_description = process_row$denominator_description,
+   numerator_description = process_row$numerator_description
+  )
+  group_fit_results[[this_group]] <- group_results
+  if (isTRUE(group_fit$ok)) {
+   pred_table <- make_prediction_table(
+    fit_obj = group_fit,
+    model_kind = paste0("Group-specific ITS: ", this_group)
+   ) %>%
+    mutate(
+     comparison_group = this_group,
+     process_id = process_id,
+     process_label = process_label
+    )
+   group_prediction_tables[[this_group]] <- pred_table
+  } else {
+  }
+ }
+ group_results_combined <- bind_rows(group_fit_results)
+ group_predictions_combined <- bind_rows(group_prediction_tables)
+ if (nrow(group_predictions_combined) > 0) {
+  all_group_predictions[[process_id]] <- group_predictions_combined
+  safe_write_csv(
+   group_predictions_combined,
+   file.path(MODEL_DIR, paste0("ITS_", process_id, "_group_predictions.csv"))
+  )
+  plot_group_its(
+   process_row = process_row,
+   monthly_summary = monthly_summary,
+   prediction_table = group_predictions_combined
+  )
+ } else {
+ }
+ diff_monthly_obj <- make_difference_monthly_data(
+  monthly_summary = monthly_summary,
+  selected_covariates = selected_covariates
+ )
+ diff_df <- diff_monthly_obj$diff_df
+ diff_covariates <- diff_monthly_obj$diff_covariates
+ all_difference_monthly[[process_id]] <- diff_df
+ safe_write_csv(
+  diff_df,
+  file.path(MODEL_DIR, paste0("ITS_", process_id, "_controlled_difference_monthly.csv"))
+ )
+ diff_model_df <- diff_df %>%
+  filter(model_eligible_month) %>%
+  arrange(encounter_month)
+ diff_covariates <- filter_model_covariates(
+  model_df = diff_model_df,
+  candidate_terms = diff_covariates
+ )
+ diff_fit <- fit_wls_newey(
+  model_df = diff_model_df,
+  outcome_col = "rate_difference_pp",
+  weight_col = "diff_weight",
+  covariate_terms = diff_covariates,
+  model_label = paste0(process_id, "_controlled_difference")
+ )
+ diff_results <- make_level_slope_results(
+  fit_obj = diff_fit,
+  process_id = process_id,
+  process_label = process_label,
+  model_type = "Controlled ITS difference",
+  comparison_label = "HSG minus Non-HSG",
+  denominator_description = process_row$denominator_description,
+  numerator_description = process_row$numerator_description
+ )
+ if (isTRUE(diff_fit$ok)) {
+  diff_prediction <- make_prediction_table(
+   fit_obj = diff_fit,
+   model_kind = "Controlled ITS difference"
+  ) %>%
+   mutate(
+    process_id = process_id,
+    process_label = process_label
+   )
+  all_difference_predictions[[process_id]] <- diff_prediction
+  safe_write_csv(
+   diff_prediction,
+   file.path(MODEL_DIR, paste0("ITS_", process_id, "_controlled_difference_predictions.csv"))
+  )
+  plot_difference_its(
+   process_row = process_row,
+   diff_df = diff_df,
+   diff_prediction_table = diff_prediction
+  )
+ } else {
+ }
+ process_results <- bind_rows(
+  group_results_combined,
+  diff_results
+ ) %>%
+  mutate(
+   estimate_print = ifelse(is.na(estimate), "NA", formatC(estimate, format = "f", digits = 3)),
+   ci_print = ifelse(
+    is.na(conf_low) | is.na(conf_high),
+    "NA",
+    paste0(
+     formatC(conf_low, format = "f", digits = 3),
+     " to ",
+     formatC(conf_high, format = "f", digits = 3)
+    )
+   ),
+   p_print = vapply(p_value, fmt_p, character(1))
+  )
+ all_results[[process_id]] <- process_results
+ print(
+  process_results %>%
+   select(
+    process_label,
+    model_type,
+    comparison,
+    contrast,
+    estimate,
+    std_error,
+    conf_low,
+    conf_high,
+    p_value,
+    units,
+    n_model_months,
+    n_pre_months,
+    n_post_months,
+    adjustment_covariates,
+    model_status
+   )
+ )
+ safe_write_csv(
+  process_results,
+  file.path(TABLE_DIR, paste0("ITS_", process_id, "_level_slope_results.csv"))
+ )
+}
+combined_results <- bind_rows(all_results)
+combined_covariate_selection <- bind_rows(all_covariate_selection_tables)
+combined_monthly_summaries <- bind_rows(all_monthly_summaries)
+combined_group_predictions <- bind_rows(all_group_predictions)
+combined_difference_predictions <- bind_rows(all_difference_predictions)
+combined_difference_monthly <- bind_rows(all_difference_monthly)
+safe_write_csv(
+ combined_results,
+ file.path(TABLE_DIR, "ITS_all_processes_level_slope_results.csv")
+)
+safe_write_csv(
+ combined_covariate_selection,
+ file.path(TABLE_DIR, "ITS_all_processes_covariate_selection.csv")
+)
+safe_write_csv(
+ combined_monthly_summaries,
+ file.path(TABLE_DIR, "ITS_all_processes_monthly_summaries.csv")
+)
+if (nrow(combined_group_predictions) > 0) {
+ safe_write_csv(
+  combined_group_predictions,
+  file.path(TABLE_DIR, "ITS_all_processes_group_predictions.csv")
+ )
+}
+if (nrow(combined_difference_predictions) > 0) {
+ safe_write_csv(
+  combined_difference_predictions,
+  file.path(TABLE_DIR, "ITS_all_processes_controlled_difference_predictions.csv")
+ )
+}
+if (nrow(combined_difference_monthly) > 0) {
+ safe_write_csv(
+  combined_difference_monthly,
+  file.path(TABLE_DIR, "ITS_all_processes_controlled_difference_monthly.csv")
+ )
+}
+safe_write_csv(
+ tibble::tibble(
+  setting = c(
+   "LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE",
+   "COUNTERFACTUAL_MAX_EFFECTIVE_EXTRAPOLATION_MONTHS",
+   "COUNTERFACTUAL_DAMPING_HALF_LIFE_MONTHS",
+   "BOUND_GROUP_RATE_PLOTS_TO_0_100",
+   "STANDARDIZE_LINEAR_PREDICTION_COVARIATES",
+   "PREDICTION_COVARIATE_REFERENCE"
+  ),
+  value = c(
+   as.character(LINEAR_COUNTERFACTUAL_EXTRAPOLATION_MODE),
+   as.character(COUNTERFACTUAL_MAX_EFFECTIVE_EXTRAPOLATION_MONTHS),
+   as.character(COUNTERFACTUAL_DAMPING_HALF_LIFE_MONTHS),
+   as.character(BOUND_GROUP_RATE_PLOTS_TO_0_100),
+   as.character(STANDARDIZE_LINEAR_PREDICTION_COVARIATES),
+   as.character(PREDICTION_COVARIATE_REFERENCE)
+  )
+ ),
+ file.path(TABLE_DIR, "ITS_linear_counterfactual_prediction_settings.csv")
+)
+print(
+ combined_results %>%
+  mutate(estimate=round(estimate,3),std_error=round(std_error,3),conf_low=round(conf_low,3),conf_high=round(conf_high,3),p_value=ifelse(is.na(p_value),NA_real_,signif(p_value,3))) %>%
+  select(process_label,model_type,comparison,contrast,estimate,std_error,conf_low,conf_high,p_value,units,n_model_months,n_pre_months,n_post_months,adjustment_covariates,model_status)
+)
