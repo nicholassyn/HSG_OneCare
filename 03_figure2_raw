@@ -1,0 +1,36 @@
+source("00_config.R"); source("01_common_definitions.R")
+outdir<-file.path(OUT_DIR,"figure2_raw"); dir.create(outdir,recursive=TRUE,showWarnings=FALSE)
+d<-read_clean_data(TRUE,TRUE); p<-make_patient_level(d); pd<-make_patient_dates(d,p)
+mods<-tibble::tribble(~module,~num,~denom,"AHP","annual_health_plan","denom_all","BMI/BP/smoking","bmi_bp_smoking","denom_all","Screening","screening","denom_all","Laboratory monitoring","lab_monitoring","denom_monitor","DRP/DFS","drp_dfs","denom_dm","Respiratory assessment","respi","denom_asthma","Vaccination","vaccination","denom_vax")
+mm<-purrr::map_dfr(seq_len(nrow(mods)),function(i){m<-mods[i,]; pd%>%mutate(block=ifelse(population_short%in%c("I","III"),"HSG","Non-HSG"))%>%group_by(block,encounter_month)%>%summarise(den=sum(.data[[m$denom]],na.rm=TRUE),num=sum(.data[[m$num]]&.data[[m$denom]],na.rm=TRUE),.groups="drop")%>%mutate(module=m$module,pct=ifelse(den>0,100*num/den,NA_real_))})
+readr::write_csv(mm,file.path(outdir,"figure2A_monthly_service_composition.csv"))
+ggplot(mm,aes(encounter_month,pct,fill=block))+geom_col(position="dodge")+facet_grid(module~block,scales="free_y")+theme_bw()+labs(x="month",y="%")
+ggsave(file.path(outdir,"figure2A_raw.png"),width=10,height=8,dpi=FIG_DPI)
+# Figure 2B raw UpSet-like
+set_cols<-c("annual_health_plan","bmi_bp_smoking","screening","lab_monitoring","drp_dfs","respi","vaccination"); set_labels<-c("Annual health plan","BMI/BP/smoking assessment","Screening","Laboratory monitoring","Diabetes complication screening","Respiratory assessment","Vaccination")
+hsg<-pd%>%filter(population_short%in%c("I","III"))%>%mutate(nsets=rowSums(as.data.frame(across(all_of(set_cols))),na.rm=TRUE))%>%filter(nsets>0)
+combo<-apply(as.data.frame(hsg[,set_cols]),1,function(x) paste(set_labels[as.logical(x)],collapse=" + ")); hsg$combo<-combo
+top<-hsg%>%count(combo,sort=TRUE)%>%slice_head(n=20)%>%mutate(rank=row_number())
+mat<-top%>%select(combo,rank)%>%tidyr::crossing(care_process=set_labels)%>%rowwise()%>%mutate(present=care_process%in%unlist(strsplit(combo," \\+ "))) %>%ungroup()
+readr::write_csv(top,file.path(outdir,"figure2B_top_combinations.csv")); readr::write_csv(mat,file.path(outdir,"figure2B_matrix.csv"))
+ggplot(top,aes(rank,n))+geom_col(fill="grey70",colour="black")+theme_bw()+labs(x="combination rank",y="unique patient-date encounters")
+ggsave(file.path(outdir,"figure2B_raw_bars.png"),width=7,height=3,dpi=FIG_DPI)
+ggplot(mat,aes(rank,care_process))+geom_point(aes(colour=present),size=2)+scale_colour_manual(values=c("FALSE"="grey80","TRUE"="black"),guide="none")+theme_bw()+labs(x="combination rank",y=NULL)
+ggsave(file.path(outdir,"figure2B_raw_matrix.png"),width=7,height=4,dpi=FIG_DPI)
+# Figure 2C raw screening-test counts/outcomes
+clean_type<-function(x){z<-tolower(as.character(x)); dplyr::case_when(grepl("lipid|cholesterol|ldl|hdl|triglyceride|cardiovascular",z)~"Lipid",grepl("hba1c|hb\\s*a1c|a1c",z)~"HbA1c",grepl("fpg|fasting",z)~"FPG",grepl("fit|faecal|fecal|occult|colorectal",z)~"FIT",grepl("hpv|pap|cervical",z)~"HPV",grepl("mmg|mammogram|mammography|breast",z)~"MMG",TRUE~NA_character_)}
+clean_outcome<-function(x,ord){z<-tolower(as.character(x)); o<-tolower(as.character(ord)); dplyr::case_when(is_present(x)&grepl("refus|declin",z)~"Declined referral",is_present(x)&grepl("soc|specialist|further|referr",z)~"Advised for further assessment to SOC/specialist",is_present(x)&grepl("follow|gp|risk|borderline|abnormal",z)~"Advised to follow-up subsequently with GP",is_present(x)&grepl("normal|completed",z)~"Completed consultation (Normal results)",!is_present(x)&grepl("follow|repeat",o)~"Advised to follow-up subsequently with GP",TRUE~"No follow-up outcome recorded after initial screen")}
+scr<-d%>%semi_join(p%>%filter(population_short%in%c("I","III"))%>%select(patient),by="patient")%>%filter(row_any_general_screening)%>%mutate(rowid=row_number())
+scr_exp<-scr%>%transmute(rowid,patient,encounter_date,type_raw=as.character(screening_screening_type),test_order=as.character(screening_test_order),follow_raw=as.character(screening_follow_up_outcome))%>%tidyr::separate_rows(type_raw,sep="\\s*\\|\\s*|\\s*;\\s*")%>%mutate(screen_type=clean_type(type_raw),follow_up=clean_outcome(follow_raw,test_order))%>%filter(!is.na(screen_type))
+flow<-scr_exp%>%count(screen_type,follow_up,name="n")
+readr::write_csv(flow,file.path(outdir,"figure2C_screening_flow_counts.csv"))
+ggplot(flow,aes(screen_type,n,fill=follow_up))+geom_col()+theme_bw()+labs(x="screening type",y="expanded screening-test encounters")
+ggsave(file.path(outdir,"figure2C_raw_counts.png"),width=8,height=5,dpi=FIG_DPI)
+# Figure 2D coverage
+rec<-pd%>%group_by(patient)%>%summarise(received_hpv=any(hpv),received_mmg=any(mmg),received_fit=any(fit),received_bmi=any(bmi_bp_smoking),received_hba1c=any(hba1c),received_drp=any(drp),received_dfs=any(dfs),received_renal=any(renal),received_lipid=any(lipid),received_respi=any(respi),received_vax=any(vaccination),.groups="drop")
+pc<-p%>%left_join(rec,by="patient")%>%mutate(across(starts_with("received_"),~tidyr::replace_na(.x,FALSE)))
+make_cov<-function(group,item,eligible,got){tibble::tibble(patient_group=group,item=item,comparison_group=c("HSG","Non-HSG"),denominator=c(sum(eligible&pc$comparison_group=="HSG",na.rm=TRUE),sum(eligible&pc$comparison_group=="Non-HSG",na.rm=TRUE)),numerator=c(sum(eligible&got&pc$comparison_group=="HSG",na.rm=TRUE),sum(eligible&got&pc$comparison_group=="Non-HSG",na.rm=TRUE)))%>%mutate(percent=ifelse(denominator>0,100*numerator/denominator,NA_real_))}
+covtab<-bind_rows(make_cov("Women 40-69","HPV screening",pc$female&pc$age_at_reference>=40&pc$age_at_reference<=69,pc$received_hpv),make_cov("Women 50-69","Mammography",pc$female&pc$age_at_reference>=50&pc$age_at_reference<=69,pc$received_mmg),make_cov("Age >=50","FIT screening",pc$age_at_reference>=50,pc$received_fit),make_cov("Diabetes","HbA1c monitoring",pc$patient_diabetes_flag,pc$received_hba1c),make_cov("Diabetes","DRP",pc$patient_diabetes_flag,pc$received_drp),make_cov("Diabetes","DFS",pc$patient_diabetes_flag,pc$received_dfs),make_cov("Diabetes","Renal monitoring",pc$patient_diabetes_flag,pc$received_renal),make_cov("Hypertension","BP assessment",pc$patient_hypertension_flag,pc$received_bmi),make_cov("Hypertension","Renal monitoring",pc$patient_hypertension_flag,pc$received_renal),make_cov("Lipid disorder","Lipid monitoring",pc$patient_lipid_disorder_flag,pc$received_lipid),make_cov("Asthma","Respiratory assessment",pc$patient_asthma_flag,pc$received_respi),make_cov("Vaccine eligible","Vaccination",pc$vaccination_eligible_flag,pc$received_vax))
+readr::write_csv(covtab,file.path(outdir,"figure2D_patient_level_coverage.csv"))
+ggplot(covtab,aes(percent,paste(patient_group,item),colour=comparison_group))+geom_point()+theme_bw()+labs(x="% eligible patients",y=NULL)
+ggsave(file.path(outdir,"figure2D_raw_coverage.png"),width=8,height=6,dpi=FIG_DPI)
